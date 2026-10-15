@@ -381,7 +381,9 @@ export class ManagedEmployeeService {
 	 * Checks if the current employee can manage ALL specified employees.
 	 *
 	 * This method verifies that the current user can manage every employee in the provided list.
-	 * It checks against the specified teams (if provided).
+	 * It checks against the specified teams (if provided), otherwise against any team the user manages.
+	 * The user's own employee and holders of CHANGE_SELECTED_EMPLOYEE pass with or without teams, as in
+	 * canManageEmployee, so records that carry no team (such as time logs) stay accessible to their owner.
 	 *
 	 * @param targetEmployeeIds - Array of employee IDs to check access for
 	 * @param organizationTeamIds - Optional array of team IDs to check manager status
@@ -392,6 +394,8 @@ export class ManagedEmployeeService {
 		if (!isNotEmpty(targetEmployeeIds)) {
 			return true;
 		}
+
+		const currentEmployeeId = RequestContext.currentUser()?.employeeId;
 
 		// Check each employee
 		for (const targetEmployeeId of targetEmployeeIds) {
@@ -407,8 +411,11 @@ export class ManagedEmployeeService {
 					}
 				}
 			} else {
-				// No teams specified → Check if user manages this employee in ANY team
-				canManageThisEmployee = await this.canManageEmployeeInAnyTeam(targetEmployeeId);
+				// No teams specified → the user themselves, or an employee they manage in ANY team
+				canManageThisEmployee =
+					RequestContext.hasPermission(PermissionsEnum.CHANGE_SELECTED_EMPLOYEE) ||
+					(!!currentEmployeeId && currentEmployeeId === targetEmployeeId) ||
+					(await this.canManageEmployeeInAnyTeam(targetEmployeeId));
 			}
 
 			if (!canManageThisEmployee) {
