@@ -71,7 +71,7 @@ export class OrganizationTeamJoinRequestService extends TenantAwareCrudService<O
 		entity: IOrganizationTeamJoinRequestCreateInput & Partial<IAppIntegrationConfig>,
 		languageCode?: LanguagesEnum
 	): Promise<IOrganizationTeamJoinRequest> {
-		const { organizationTeamId, email } = entity;
+		const { organizationTeamId, email, fullName, linkAddress, position } = entity;
 
 		/** find existing team join request and throw exception */
 		const request = await this.count({
@@ -118,13 +118,18 @@ export class OrganizationTeamJoinRequestService extends TenantAwareCrudService<O
 			const createEntityLike = this.typeOrmRepository.create({
 				organizationTeamId,
 				email,
+				fullName,
+				linkAddress,
+				position,
 				organizationId,
 				tenantId,
 				code,
 				token,
 				status: null
 			});
-			const organizationTeamJoinRequest = await this.save(createEntityLike);
+			// The route is public, so save() would stamp the empty caller tenant over the team's tenant.
+			// A plain copy, because MikroORM builds the tenant relation from tenantId only for a plain payload.
+			const organizationTeamJoinRequest = await this.saveWithoutEnrichment({ ...createEntityLike });
 
 			/** Place here organization team join request email to send verification code*/
 			let { appName, appLogo, appSignature, appLink, companyLink, companyName } = entity;
