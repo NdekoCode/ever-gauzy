@@ -133,6 +133,7 @@ describe('time log stored rates migration on SQLite', () => {
 			payRateValue: null,
 			projectBillRateValue: 90,
 			projectMemberBillRateValue: null,
+			projectMemberBillRateCurrency: null,
 			ratesStored: 1
 		});
 		expect(await logOf('marie-alone')).toMatchObject({
@@ -151,7 +152,9 @@ describe('time log stored rates migration on SQLite', () => {
 		});
 		expect(await logOf('marie-closed')).toMatchObject({
 			projectBillRateValue: null,
+			projectBillRateCurrency: null,
 			projectMemberBillRateValue: null,
+			projectMemberBillRateCurrency: null,
 			ratesStored: 1
 		});
 	});
@@ -245,12 +248,11 @@ describe('time log stored rates migration on MySQL', () => {
 			'ALTER TABLE `time_log` ADD COLUMN `projectMemberBillRateCurrency` varchar(255) NULL',
 			'ALTER TABLE `time_log` ADD COLUMN `ratesStored` tinyint NULL'
 		]);
+		// One pass: each log is written once, and marked by the statement that fills it
 		const fills = queries.filter((sql) => sql.startsWith('UPDATE'));
-		expect(fills).toHaveLength(3);
-		expect(fills[2]).toContain('`time_log`.`ratesStored` = 1');
-		for (const fill of fills) {
-			expect(fill).toContain('`time_log`.`ratesStored` IS NULL');
-		}
+		expect(fills).toHaveLength(1);
+		expect(fills[0]).toContain('`time_log`.`ratesStored` = 1');
+		expect(fills[0]).toContain('WHERE `time_log`.`ratesStored` IS NULL');
 		expect(queries[queries.length - 1]).toBe('SELECT RELEASE_LOCK(?)');
 	});
 
@@ -261,10 +263,8 @@ describe('time log stored rates migration on MySQL', () => {
 
 		expect(queries.some((sql) => sql.startsWith('ALTER TABLE'))).toBe(false);
 		const fills = queries.filter((sql) => sql.startsWith('UPDATE'));
-		expect(fills).toHaveLength(3);
-		for (const fill of fills) {
-			expect(fill).toContain('`time_log`.`ratesStored` IS NULL');
-		}
+		expect(fills).toHaveLength(1);
+		expect(fills[0]).toContain('`time_log`.`ratesStored` IS NULL');
 	});
 
 	it('drops every column on down', async () => {
@@ -285,9 +285,10 @@ describe('time log stored rates migration on PostgreSQL', () => {
 		expect(queries[0]).toBe('SELECT pg_advisory_xact_lock($1)');
 		expect(queries.filter((sql) => sql.startsWith('ALTER TABLE'))).toHaveLength(RATE_COLUMNS.length);
 		const fills = queries.filter((sql) => sql.startsWith('UPDATE'));
-		expect(fills).toHaveLength(3);
-		expect(fills[2]).toContain('FROM "employee"');
-		expect(fills[1]).toContain('"member"."billRateValue" IS NOT NULL');
+		expect(fills).toHaveLength(1);
+		expect(fills[0]).toContain('INNER JOIN "employee"');
+		expect(fills[0]).toContain('"member"."billRateValue" IS NOT NULL');
+		expect(fills[0]).toContain('"ratesStored" = true');
 	});
 
 	it('drops every column on down', async () => {

@@ -57,9 +57,9 @@ const COLUMNS: ReadonlyArray<{ name: string; type: Readonly<Record<Dialect, stri
  * Every existing log is filled with the rates of today and marked, so every amount read right after the migration is
  * the amount read right before it. A rate that states no currency (none, or an empty one) is stored with the
  * organization's, as a new log stores it, so a later change of the organization's currency never relabels a recorded
- * price. The fill gives rates only to the logs that store none yet (`ratesStored` null), and marks each log last: a
- * run cut short (MySQL has no transactional DDL) is completed by the next one, and running `up` again, or after
- * SQLite's `down`, which keeps the columns, never overwrites a rate a log already stores.
+ * price. The fill gives rates only to the logs that store none yet (`ratesStored` null), and marks each log in the
+ * statement that fills it: a run cut short (MySQL has no transactional DDL) is completed by the next one, and running
+ * `up` again, or after SQLite's `down`, which keeps the columns, never overwrites a rate a log already stores.
  *
  * A transaction-scoped advisory lock (a named lock on MySQL) makes two API processes that boot at the same time
  * against one database run it one after the other.
@@ -171,70 +171,89 @@ const CURRENT_MEMBERSHIP_SQLITE =
 	`("member"."isActive" IS NULL OR "member"."isActive" = 1) ` +
 	`AND ("member"."isArchived" IS NULL OR "member"."isArchived" = 0) AND "member"."deletedAt" IS NULL`;
 
+/** The currency of the organization of the log being filled, on SQLite. */
+const SQLITE_ORGANIZATION_CURRENCY = `(SELECT "currency" FROM "organization" WHERE "organization"."id" = "time_log"."organizationId")`;
+
+/** The project of the log being filled, while it is live, on SQLite. */
+const SQLITE_LIVE_PROJECT = `"organization_project" "project" WHERE "project"."id" = "time_log"."projectId" AND "project"."deletedAt" IS NULL`;
+
+/** The member's client rate on the live project of the log being filled, from a current membership, on SQLite. */
+const SQLITE_MEMBER_RATE =
+	`SELECT "member"."billRateValue" FROM "organization_project_employee" "member" ` +
+	`WHERE "member"."organizationProjectId" = "time_log"."projectId" ` +
+	`AND "member"."employeeId" = "time_log"."employeeId" AND "member"."billRateValue" IS NOT NULL ` +
+	`AND ${CURRENT_MEMBERSHIP_SQLITE} AND EXISTS (SELECT 1 FROM ${SQLITE_LIVE_PROJECT}) LIMIT 1`;
+
 /**
- * Today's rates on every log that stores none yet: the project's and the membership's client rates first, then the
- * member's own rates, which mark the log. Each statement only touches unmarked logs, so a run cut short anywhere is
- * completed by the next one, and a marked log is never written again.
+ * Today's rates on every log that stores none yet, in one statement that also marks it: each log is written once (a
+ * table of a million logs is rewritten once, not three times), and a run cut short (MySQL has no transactional DDL)
+ * leaves each log either filled and marked or untouched, which the next run fills. A marked log is never written again.
+ *
+ * The client rates come from a live project, the member's from a current membership of that project. Each stored
+ * currency is the rate's own, else the organization's (an empty one counts as none), and a client rate there is none of
+ * stores no currency.
  */
 const FILL: Readonly<Record<Dialect, ReadonlyArray<string>>> = {
 	postgres: [
-		`UPDATE "time_log" SET "projectBillRateValue" = "project"."billRateValue", ` +
-			`"projectBillRateCurrency" = COALESCE(NULLIF("project"."currency", ''), (SELECT "currency" FROM "organization" WHERE "organization"."id" = "time_log"."organizationId")) ` +
-			`FROM "organization_project" "project" WHERE "project"."id" = "time_log"."projectId" ` +
-			`AND "project"."deletedAt" IS NULL AND "time_log"."ratesStored" IS NULL`,
-		`UPDATE "time_log" SET "projectMemberBillRateValue" = "member"."billRateValue", ` +
-			`"projectMemberBillRateCurrency" = COALESCE(NULLIF("project"."currency", ''), (SELECT "currency" FROM "organization" WHERE "organization"."id" = "time_log"."organizationId")) ` +
-			`FROM "organization_project_employee" "member", "organization_project" "project" ` +
-			`WHERE "project"."id" = "time_log"."projectId" AND "project"."deletedAt" IS NULL ` +
-			`AND "member"."organizationProjectId" = "time_log"."projectId" ` +
-			`AND "member"."employeeId" = "time_log"."employeeId" AND "member"."billRateValue" IS NOT NULL ` +
-			`AND ${CURRENT_MEMBERSHIP_PG} AND "time_log"."ratesStored" IS NULL`,
-		`UPDATE "time_log" SET "billRateValue" = "employee"."billRateValue", ` +
-			`"billRateCurrency" = COALESCE(NULLIF("employee"."billRateCurrency", ''), (SELECT "currency" FROM "organization" WHERE "organization"."id" = "time_log"."organizationId")), ` +
-			`"payRateValue" = "employee"."payRateValue", ` +
-			`"payRateCurrency" = COALESCE(NULLIF("employee"."payRateCurrency", ''), (SELECT "currency" FROM "organization" WHERE "organization"."id" = "time_log"."organizationId")), "ratesStored" = true ` +
-			`FROM "employee" WHERE "employee"."id" = "time_log"."employeeId" AND "time_log"."ratesStored" IS NULL`
+		`UPDATE "time_log" SET "billRateValue" = "rates"."billRateValue", "billRateCurrency" = "rates"."billRateCurrency", ` +
+			`"payRateValue" = "rates"."payRateValue", "payRateCurrency" = "rates"."payRateCurrency", ` +
+			`"projectBillRateValue" = "rates"."projectBillRateValue", ` +
+			`"projectBillRateCurrency" = "rates"."projectBillRateCurrency", ` +
+			`"projectMemberBillRateValue" = "rates"."projectMemberBillRateValue", ` +
+			`"projectMemberBillRateCurrency" = "rates"."projectMemberBillRateCurrency", "ratesStored" = true ` +
+			`FROM (SELECT "log"."id", "employee"."billRateValue", ` +
+			`COALESCE(NULLIF("employee"."billRateCurrency", ''), "organization"."currency") AS "billRateCurrency", ` +
+			`"employee"."payRateValue", ` +
+			`COALESCE(NULLIF("employee"."payRateCurrency", ''), "organization"."currency") AS "payRateCurrency", ` +
+			`"project"."billRateValue" AS "projectBillRateValue", ` +
+			`CASE WHEN "project"."id" IS NOT NULL THEN COALESCE(NULLIF("project"."currency", ''), "organization"."currency") END ` +
+			`AS "projectBillRateCurrency", ` +
+			`"member"."billRateValue" AS "projectMemberBillRateValue", ` +
+			`CASE WHEN "member"."billRateValue" IS NOT NULL THEN COALESCE(NULLIF("project"."currency", ''), "organization"."currency") END ` +
+			`AS "projectMemberBillRateCurrency" ` +
+			`FROM "time_log" "log" INNER JOIN "employee" ON "employee"."id" = "log"."employeeId" ` +
+			`LEFT JOIN "organization" ON "organization"."id" = "log"."organizationId" ` +
+			`LEFT JOIN "organization_project" "project" ON "project"."id" = "log"."projectId" AND "project"."deletedAt" IS NULL ` +
+			`LEFT JOIN LATERAL (SELECT "member"."billRateValue" FROM "organization_project_employee" "member" ` +
+			`WHERE "member"."organizationProjectId" = "project"."id" AND "member"."employeeId" = "log"."employeeId" ` +
+			`AND "member"."billRateValue" IS NOT NULL AND ${CURRENT_MEMBERSHIP_PG} LIMIT 1) "member" ON true ` +
+			`WHERE "log"."ratesStored" IS NULL) "rates" ` +
+			`WHERE "time_log"."id" = "rates"."id"`
 	],
 	mysql: [
-		'UPDATE `time_log` INNER JOIN `organization_project` `project` ON `project`.`id` = `time_log`.`projectId` ' +
-			'SET `time_log`.`projectBillRateValue` = `project`.`billRateValue`, ' +
-			"`time_log`.`projectBillRateCurrency` = COALESCE(NULLIF(`project`.`currency`, ''), (SELECT `currency` FROM `organization` WHERE `organization`.`id` = `time_log`.`organizationId`)) " +
-			'WHERE `project`.`deletedAt` IS NULL AND `time_log`.`ratesStored` IS NULL',
-		'UPDATE `time_log` INNER JOIN `organization_project` `project` ON `project`.`id` = `time_log`.`projectId` ' +
-			'INNER JOIN `organization_project_employee` `member` ' +
-			'ON `member`.`organizationProjectId` = `time_log`.`projectId` ' +
-			'AND `member`.`employeeId` = `time_log`.`employeeId` ' +
-			'SET `time_log`.`projectMemberBillRateValue` = `member`.`billRateValue`, ' +
-			"`time_log`.`projectMemberBillRateCurrency` = COALESCE(NULLIF(`project`.`currency`, ''), (SELECT `currency` FROM `organization` WHERE `organization`.`id` = `time_log`.`organizationId`)) " +
-			`WHERE \`member\`.\`billRateValue\` IS NOT NULL AND \`project\`.\`deletedAt\` IS NULL AND ${CURRENT_MEMBERSHIP_MYSQL} ` +
-			'AND `time_log`.`ratesStored` IS NULL',
 		'UPDATE `time_log` INNER JOIN `employee` ON `employee`.`id` = `time_log`.`employeeId` ' +
+			'LEFT JOIN `organization` ON `organization`.`id` = `time_log`.`organizationId` ' +
+			'LEFT JOIN `organization_project` `project` ' +
+			'ON `project`.`id` = `time_log`.`projectId` AND `project`.`deletedAt` IS NULL ' +
+			'LEFT JOIN `organization_project_employee` `member` ON `member`.`organizationProjectId` = `project`.`id` ' +
+			'AND `member`.`employeeId` = `time_log`.`employeeId` AND `member`.`billRateValue` IS NOT NULL ' +
+			`AND ${CURRENT_MEMBERSHIP_MYSQL} ` +
 			'SET `time_log`.`billRateValue` = `employee`.`billRateValue`, ' +
-			"`time_log`.`billRateCurrency` = COALESCE(NULLIF(`employee`.`billRateCurrency`, ''), (SELECT `currency` FROM `organization` WHERE `organization`.`id` = `time_log`.`organizationId`)), " +
+			"`time_log`.`billRateCurrency` = COALESCE(NULLIF(`employee`.`billRateCurrency`, ''), `organization`.`currency`), " +
 			'`time_log`.`payRateValue` = `employee`.`payRateValue`, ' +
-			"`time_log`.`payRateCurrency` = COALESCE(NULLIF(`employee`.`payRateCurrency`, ''), (SELECT `currency` FROM `organization` WHERE `organization`.`id` = `time_log`.`organizationId`)), " +
+			"`time_log`.`payRateCurrency` = COALESCE(NULLIF(`employee`.`payRateCurrency`, ''), `organization`.`currency`), " +
+			'`time_log`.`projectBillRateValue` = `project`.`billRateValue`, ' +
+			'`time_log`.`projectBillRateCurrency` = CASE WHEN `project`.`id` IS NOT NULL ' +
+			"THEN COALESCE(NULLIF(`project`.`currency`, ''), `organization`.`currency`) END, " +
+			'`time_log`.`projectMemberBillRateValue` = `member`.`billRateValue`, ' +
+			'`time_log`.`projectMemberBillRateCurrency` = CASE WHEN `member`.`billRateValue` IS NOT NULL ' +
+			"THEN COALESCE(NULLIF(`project`.`currency`, ''), `organization`.`currency`) END, " +
 			'`time_log`.`ratesStored` = 1 ' +
 			'WHERE `time_log`.`ratesStored` IS NULL'
 	],
 	// Correlated sub-queries: an `UPDATE ... FROM` needs SQLite 3.33, older than some embedded builds.
 	sqlite: [
 		`UPDATE "time_log" SET ` +
-			`"projectBillRateValue" = (SELECT "billRateValue" FROM "organization_project" "project" WHERE "project"."id" = "time_log"."projectId" AND "project"."deletedAt" IS NULL), ` +
-			`"projectBillRateCurrency" = COALESCE(NULLIF((SELECT "currency" FROM "organization_project" "project" WHERE "project"."id" = "time_log"."projectId" AND "project"."deletedAt" IS NULL), ''), (SELECT "currency" FROM "organization" WHERE "organization"."id" = "time_log"."organizationId")) ` +
-			`WHERE "time_log"."projectId" IS NOT NULL AND "time_log"."ratesStored" IS NULL`,
-		`UPDATE "time_log" SET "projectMemberBillRateValue" = (SELECT "member"."billRateValue" ` +
-			`FROM "organization_project_employee" "member" ` +
-			`WHERE "member"."organizationProjectId" = "time_log"."projectId" ` +
-			`AND "member"."employeeId" = "time_log"."employeeId" AND "member"."billRateValue" IS NOT NULL ` +
-			`AND ${CURRENT_MEMBERSHIP_SQLITE} LIMIT 1), ` +
-			`"projectMemberBillRateCurrency" = COALESCE(NULLIF((SELECT "currency" FROM "organization_project" "project" WHERE "project"."id" = "time_log"."projectId"), ''), (SELECT "currency" FROM "organization" WHERE "organization"."id" = "time_log"."organizationId")) ` +
-			`WHERE "time_log"."projectId" IS NOT NULL AND "time_log"."ratesStored" IS NULL ` +
-			`AND EXISTS (SELECT 1 FROM "organization_project" "project" WHERE "project"."id" = "time_log"."projectId" AND "project"."deletedAt" IS NULL)`,
-		`UPDATE "time_log" SET ` +
 			`"billRateValue" = (SELECT "billRateValue" FROM "employee" WHERE "employee"."id" = "time_log"."employeeId"), ` +
-			`"billRateCurrency" = COALESCE(NULLIF((SELECT "billRateCurrency" FROM "employee" WHERE "employee"."id" = "time_log"."employeeId"), ''), (SELECT "currency" FROM "organization" WHERE "organization"."id" = "time_log"."organizationId")), ` +
+			`"billRateCurrency" = COALESCE(NULLIF((SELECT "billRateCurrency" FROM "employee" WHERE "employee"."id" = "time_log"."employeeId"), ''), ${SQLITE_ORGANIZATION_CURRENCY}), ` +
 			`"payRateValue" = (SELECT "payRateValue" FROM "employee" WHERE "employee"."id" = "time_log"."employeeId"), ` +
-			`"payRateCurrency" = COALESCE(NULLIF((SELECT "payRateCurrency" FROM "employee" WHERE "employee"."id" = "time_log"."employeeId"), ''), (SELECT "currency" FROM "organization" WHERE "organization"."id" = "time_log"."organizationId")), ` +
+			`"payRateCurrency" = COALESCE(NULLIF((SELECT "payRateCurrency" FROM "employee" WHERE "employee"."id" = "time_log"."employeeId"), ''), ${SQLITE_ORGANIZATION_CURRENCY}), ` +
+			`"projectBillRateValue" = (SELECT "billRateValue" FROM ${SQLITE_LIVE_PROJECT}), ` +
+			`"projectBillRateCurrency" = CASE WHEN EXISTS (SELECT 1 FROM ${SQLITE_LIVE_PROJECT}) ` +
+			`THEN COALESCE(NULLIF((SELECT "currency" FROM ${SQLITE_LIVE_PROJECT}), ''), ${SQLITE_ORGANIZATION_CURRENCY}) END, ` +
+			`"projectMemberBillRateValue" = (${SQLITE_MEMBER_RATE}), ` +
+			`"projectMemberBillRateCurrency" = CASE WHEN (${SQLITE_MEMBER_RATE}) IS NOT NULL ` +
+			`THEN COALESCE(NULLIF((SELECT "currency" FROM ${SQLITE_LIVE_PROJECT}), ''), ${SQLITE_ORGANIZATION_CURRENCY}) END, ` +
 			`"ratesStored" = 1 ` +
 			`WHERE EXISTS (SELECT 1 FROM "employee" WHERE "employee"."id" = "time_log"."employeeId") ` +
 			`AND "time_log"."ratesStored" IS NULL`
