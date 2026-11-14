@@ -1,4 +1,4 @@
-import { EntityManager, In } from 'typeorm';
+import { EntityManager, FindOneOptions, In } from 'typeorm';
 import { ActorTypeEnum, BaseEntityEnum, ID, ITimeLog } from '@gauzy/contracts';
 import { isBetterSqlite3, isSqlite } from '@gauzy/config';
 import { ActivityLog } from '../../activity-log/activity-log.entity';
@@ -196,4 +196,15 @@ export async function recordTimeLogHistory(
 		return manager.create(ActivityLog, row);
 	});
 	await manager.save(ActivityLog, rows);
+}
+
+/**
+ * The lock a change takes on the rows it reads its values before from, held until its transaction ends, so no other
+ * change comes between that read and its write. None on SQLite, which has no row lock (TypeORM refuses one there).
+ */
+export function lockedForChange(): Pick<FindOneOptions, 'lock'> {
+	if (isSqlite() || isBetterSqlite3()) {
+		return {};
+	}
+	return { lock: { mode: 'pessimistic_write' } };
 }

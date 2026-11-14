@@ -9,6 +9,12 @@ import { TimeLogUpdateHandler } from './time-log-update.handler';
 
 // The tenant check on project / task / client / team has its own spec (time-log-references.spec.ts).
 jest.mock('../../time-log-references', () => ({ assertTimeLogReferencesOfTenant: jest.fn(async () => undefined) }));
+// A database that takes row locks, as PostgreSQL and MySQL do.
+jest.mock('@gauzy/config', () => ({
+	...jest.requireActual('@gauzy/config'),
+	isBetterSqlite3: jest.fn(() => false),
+	isSqlite: jest.fn(() => false)
+}));
 // The history rows themselves have their own spec (time-log-history.writer.spec.ts).
 jest.mock('../../time-log-history.writer', () => ({
 	...jest.requireActual('../../time-log-history.writer'),
@@ -36,7 +42,10 @@ describe('TimeLogUpdateHandler: history of an edit', () => {
 
 	function setup() {
 		const transactionRepository = { update: jest.fn(async () => ({ affected: 1 })) };
-		const transactionManager = { getRepository: jest.fn(() => transactionRepository) };
+		const transactionManager = {
+			getRepository: jest.fn(() => transactionRepository),
+			findOne: jest.fn(async () => storedLog())
+		};
 		const repository = {
 			update: jest.fn(async () => ({ affected: 1 })),
 			findOneBy: jest.fn(async () => storedLog())
@@ -87,6 +96,29 @@ describe('TimeLogUpdateHandler: history of an edit', () => {
 			updatedFields: ['description', 'isBillable'],
 			previousValues: [{ description: null }, { isBillable: true }],
 			updatedValues: [{ description: 'Pairing with Amina' }, { isBillable: false }]
+		});
+	});
+
+	it('takes the values before from the entry read under lock in the transaction, an edit saved meanwhile included', async () => {
+		const { handler, transactionManager, record } = setup();
+		// Another edit saved "Alpha" after this one first read the entry, which had no description then.
+		transactionManager.findOne.mockResolvedValue(new TimeLog({ ...storedLog(), description: 'Alpha' }));
+
+		await handler.execute(new TimeLogUpdateCommand({ description: 'Beta' }, storedLog(), null, false, {}));
+
+		expect(transactionManager.findOne).toHaveBeenCalledWith(
+			TimeLog,
+			expect.objectContaining({
+				where: { id: 'log-1', tenantId: 'tenant-1' },
+				lock: { mode: 'pessimistic_write' }
+			})
+		);
+		const [, [entry]] = record.mock.calls[0];
+		expect(entry.change).toEqual({
+			action: ActionTypeEnum.Updated,
+			updatedFields: ['description'],
+			previousValues: [{ description: 'Alpha' }],
+			updatedValues: [{ description: 'Beta' }]
 		});
 	});
 

@@ -18,7 +18,12 @@ import { postsHeartbeatSlots } from '../../tracker-source';
 import { TimeSlot } from '../../../time-slot/time-slot.entity';
 import { TimeLogUpdateCommand } from '../time-log-update.command';
 import { updatedChange } from '../../time-log-history';
-import { historySubject, recordTimeLogHistory, TimeLogHistoryOptions } from '../../time-log-history.writer';
+import {
+	historySubject,
+	lockedForChange,
+	recordTimeLogHistory,
+	TimeLogHistoryOptions
+} from '../../time-log-history.writer';
 import { TypeOrmTimeLogRepository } from '../../repository/type-orm-time-log.repository';
 import { TypeOrmTimeSlotRepository } from '../../../time-slot/repository/type-orm-time-slot.repository';
 import { MikroOrmTimeSlotRepository } from '../../../time-slot/repository/mikro-orm-time-slot.repository';
@@ -144,7 +149,7 @@ export class TimeLogUpdateHandler implements ICommandHandler<TimeLogUpdateComman
 			// nothing of the previous employee has been touched (at most the new employee keeps blank slots no log
 			// holds), and the error propagates;
 			Object.assign(timeLog, changes, timesheet ? { timesheetId: timesheet.id } : {}, { timeSlots: destination });
-			await this.writeWithHistory(stored, changes, history, (repository) =>
+			await this.writeWithHistory(stored, timeLog, history, (repository) =>
 				this.saveUpdatedTimeLog(timeLog, repository)
 			);
 			timeLog = await this.typeOrmTimeLogRepository.findOneBy({ id: timeLog.id });
@@ -513,16 +518,18 @@ export class TimeLogUpdateHandler implements ICommandHandler<TimeLogUpdateComman
 
 	/**
 	 * Runs the write of an edit. Edited by a person (`history` given), the write and the entry's history row run in
-	 * one transaction, or neither does. Otherwise the write runs alone, as before.
+	 * one transaction, or neither does. The values before are those of the entry read under lock in that transaction:
+	 * an edit saved since the entry was first read is the one this edit replaces, and none can come in between.
+	 * Otherwise the write runs alone, as before.
 	 *
-	 * @param stored - The entry as stored before the edit.
-	 * @param changes - The edit.
+	 * @param stored - The entry as first read, which names the row.
+	 * @param written - What the write stores: the changes of an update, the whole entry of a save.
 	 * @param history - Given by the routes through which a person edits an entry.
 	 * @param write - The write, through the repository it is handed.
 	 */
 	private async writeWithHistory<T>(
 		stored: ITimeLog,
-		changes: Partial<ITimeLog>,
+		written: Partial<ITimeLog>,
 		history: TimeLogHistoryOptions | undefined,
 		write: (repository: Repository<TimeLog>) => Promise<T>
 	): Promise<T> {
@@ -531,9 +538,18 @@ export class TimeLogUpdateHandler implements ICommandHandler<TimeLogUpdateComman
 			return write(this.typeOrmTimeLogRepository);
 		}
 		return this.dataSource.transaction(async (manager) => {
+			const current = await manager.findOne(TimeLog, {
+				where: { id: stored.id, tenantId: stored.tenantId },
+				withDeleted: true,
+				...lockedForChange()
+			});
 			const result = await write(manager.getRepository(TimeLog));
-			const edited = { ...stored, ...changes } as ITimeLog;
-			const change = updatedChange(stored, edited);
+			// An entry deleted for good in the meantime: the write changed nothing to record.
+			if (!current) {
+				return result;
+			}
+			const edited = { ...current, ...written } as ITimeLog;
+			const change = updatedChange(current, edited);
 			if (change) {
 				await recordTimeLogHistory(manager, [
 					{ subject: historySubject(edited), change, reason: history.reason }
