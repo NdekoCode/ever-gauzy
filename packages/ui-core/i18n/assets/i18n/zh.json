@@ -510,6 +510,8 @@
 			"DEFAULT_TERMS": "发票和估算的默认条款",
 			"CONVERT_ESTIMATES": "转换估计",
 			"ALLOW_CONVERTING": "自动将接受的估算转换成发票",
+			"INVOICE_REMINDERS": "付款提醒",
+			"SEND_INVOICE_REMINDERS": "在未付发票到期前 3 天，以及到期后 1、7 和 14 天，通过电子邮件提醒客户",
 			"DEFAULT_DAYS": "发票和估算到期的默认时间。",
 			"TEMPLATE_NAME": "模板名称",
 			"TEMPLATE_BODY": "模板正文",
