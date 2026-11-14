@@ -147,6 +147,7 @@ export interface ITimeLogOwedAmountReportEmployee {
 	employeeId?: Id;
 	duration: number;
 	amount: number;
+	currency?: string | null;
 }
 
 /** One day of the owed-amount report, as `TimeLogOwedAmountReportEntry` declares it. */
@@ -659,7 +660,8 @@ export class TimeLogResolver {
 			employees: (day.employees ?? []).map((line) => ({
 				employeeId: line.employee?.id,
 				duration: line.duration,
-				amount: line.amount
+				amount: line.amount,
+				currency: line.currency
 			}))
 		}));
 	}

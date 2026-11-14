@@ -43759,6 +43759,11 @@ type TimeLogOwedAmountReportEmployee {
 
   """What the organization owes for it. Money."""
   amount: Decimal!
+
+  """
+  The currency of `amount`. A day priced in several currencies has one line per currency, never one sum.
+  """
+  currency: String
 }
 
 """One day of the owed-amount report, with the lines it is made of."""
