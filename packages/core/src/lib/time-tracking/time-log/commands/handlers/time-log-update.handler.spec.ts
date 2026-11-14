@@ -164,11 +164,12 @@ describe('TimeLogUpdateHandler release of slots read through MikroORM', () => {
 });
 
 /**
- * An update that gives the log no slot of its own re-saved the row it had just read back. TypeORM writes every column
- * that differs from the database at save time, so a timer stop landing between that read and that save was undone:
- * the log ran again, with its old end. Such an update now writes the row once, through its targeted update only.
+ * An update that makes no slot of its own (`manualTimeSlot`, as the timer's start move sends) re-saved the row it
+ * had just read back. TypeORM writes every column that differs from the database at save time, so a timer stop
+ * landing between that read and that save was undone: the log ran again, with its old end. Such an update now
+ * writes the row once, through its targeted update only.
  */
-describe('TimeLogUpdateHandler writes a log once when it gives it no slot', () => {
+describe('TimeLogUpdateHandler writes a log once when it makes no slot of its own', () => {
 	beforeEach(() => {
 		jest.spyOn(console, 'log').mockImplementation(() => undefined);
 		jest.spyOn(RequestContext, 'currentTenantId').mockReturnValue(TENANT_A);
