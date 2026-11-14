@@ -104,6 +104,8 @@ export class TimeLogHistoryService {
 		}
 		builder
 			.orderBy('history.createdAt', 'DESC')
+			// Rows recorded at the same moment keep one order from page to page.
+			.addOrderBy('history.id', 'DESC')
 			.skip(take * (page - 1))
 			.take(take);
 

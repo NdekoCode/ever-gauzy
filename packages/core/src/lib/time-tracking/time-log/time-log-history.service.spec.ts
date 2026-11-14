@@ -2,6 +2,7 @@
 import '../../core/entities/internal';
 
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Brackets } from 'typeorm';
 import { PermissionsEnum } from '@gauzy/contracts';
 import { RequestContext } from '../../core/context';
 import { TimeLogController } from './time-log.controller';
@@ -56,6 +57,34 @@ describe('TimeLogHistoryService scoping', () => {
 	};
 
 	afterEach(() => jest.restoreAllMocks());
+
+	const PERIOD = { organizationId: 'org-1', startDate: new Date('2026-11-01'), endDate: new Date('2026-11-30') };
+
+	/** A query builder that keeps each call with its SQL, the conditions in brackets included, and answers no row. */
+	function recordingBuilder() {
+		const calls: string[] = [];
+		const builder: object = new Proxy(
+			{},
+			{
+				get: (_target, name) => {
+					if (name === 'then') {
+						return undefined;
+					}
+					if (name === 'getManyAndCount') {
+						return async () => [[], 0];
+					}
+					return (...args: unknown[]) => {
+						args.filter((arg) => arg instanceof Brackets).forEach((arg) =>
+							arg.whereFactory(builder as never)
+						);
+						calls.push([String(name), ...args.filter((arg) => typeof arg === 'string')].join(' '));
+						return builder;
+					};
+				}
+			}
+		);
+		return { builder, calls };
+	}
 
 	describe('readableEmployeeIds', () => {
 		it('lets a caller who may see everyone read every member, or the members named', async () => {
@@ -165,6 +194,18 @@ describe('TimeLogHistoryService scoping', () => {
 
 			expect(page).toEqual({ items: [], total: 0 });
 			expect(manager.createQueryBuilder).not.toHaveBeenCalled();
+		});
+
+		it('orders the rows of one moment by id, so pages neither repeat nor skip a row', async () => {
+			signedInAs(null, [PermissionsEnum.CHANGE_SELECTED_EMPLOYEE]);
+			const { service, manager } = setup();
+			const { builder, calls } = recordingBuilder();
+			manager.createQueryBuilder.mockReturnValue(builder);
+
+			await service.findPeriodHistory(PERIOD as never);
+
+			const order = calls.filter((call) => /^(orderBy|addOrderBy) /.test(call));
+			expect(order).toEqual(['orderBy history.createdAt DESC', 'addOrderBy history.id DESC']);
 		});
 	});
 });
