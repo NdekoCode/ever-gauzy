@@ -1,12 +1,12 @@
 import { QueryRunner } from 'typeorm';
 import { EmailTemplateUtils } from '../email-template/utils';
-import { RestoreAppNameInInvitationEmailSubjects1791000010720 } from './migrations/1791000010720-RestoreAppNameInInvitationEmailSubjects';
+import { RestoreAppNameInInvitationEmailSubjects1791000011300 } from './migrations/1791000011300-RestoreAppNameInInvitationEmailSubjects';
 
 /**
  * The redesign's migration reads the template files when it runs. An installation that ran it before the invitation
  * subjects named the app again keeps the subjects without the name, unless this one writes those templates again.
  */
-describe('RestoreAppNameInInvitationEmailSubjects1791000010720', () => {
+describe('RestoreAppNameInInvitationEmailSubjects1791000011300', () => {
 	const INVITATIONS = ['invite-employee', 'invite-gauzy-teams', 'invite-user'];
 	const queryRunner = {} as QueryRunner;
 
@@ -23,7 +23,7 @@ describe('RestoreAppNameInInvitationEmailSubjects1791000010720', () => {
 	const migrated = (): string[] => migrate.mock.calls.map(([, folder]) => folder);
 
 	it('writes the three invitations again, and no other template', async () => {
-		await new RestoreAppNameInInvitationEmailSubjects1791000010720().up(queryRunner);
+		await new RestoreAppNameInInvitationEmailSubjects1791000011300().up(queryRunner);
 
 		expect(migrated().sort()).toEqual(INVITATIONS);
 		expect(migrate.mock.calls.every(([runner]) => runner === queryRunner)).toBe(true);
@@ -38,7 +38,7 @@ describe('RestoreAppNameInInvitationEmailSubjects1791000010720', () => {
 		});
 
 		await expect(
-			new RestoreAppNameInInvitationEmailSubjects1791000010720().up(queryRunner)
+			new RestoreAppNameInInvitationEmailSubjects1791000011300().up(queryRunner)
 		).resolves.toBeUndefined();
 
 		expect(migrated().sort()).toEqual(INVITATIONS);
@@ -47,7 +47,7 @@ describe('RestoreAppNameInInvitationEmailSubjects1791000010720', () => {
 	});
 
 	it('has nothing to undo', async () => {
-		await expect(new RestoreAppNameInInvitationEmailSubjects1791000010720().down()).resolves.toBeUndefined();
+		await expect(new RestoreAppNameInInvitationEmailSubjects1791000011300().down()).resolves.toBeUndefined();
 
 		expect(migrate).not.toHaveBeenCalled();
 	});

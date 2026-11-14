@@ -18,8 +18,8 @@ const INVITATIONS = [
  * before this change keeps the subjects without the name: they are written again here. Where both run together, this
  * repeats what the redesign has just written. Only the default rows change, as there (`migrateEmailTemplates`).
  */
-export class RestoreAppNameInInvitationEmailSubjects1791000010720 implements MigrationInterface {
-	name = 'RestoreAppNameInInvitationEmailSubjects1791000010720';
+export class RestoreAppNameInInvitationEmailSubjects1791000011300 implements MigrationInterface {
+	name = 'RestoreAppNameInInvitationEmailSubjects1791000011300';
 
 	public async up(queryRunner: QueryRunner): Promise<void> {
 		console.log(chalk.yellow(this.name + ' start running!'));
