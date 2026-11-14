@@ -23,7 +23,7 @@ import { EmployeeService } from '../../employee/employee.service';
 import { RoleAuthorizationService } from '../../role/role-authorization.service';
 import { UserOrganizationService } from '../../user-organization/user-organization.services';
 import { AccessTokenService } from '../../access-token/access-token.service';
-import { IToken } from '../../token/interfaces';
+import { IToken, TokenStatus } from '../../token/interfaces';
 import { readSessionClaims } from '../user-session/user-session-claims';
 import { isSignedOutSessionToken } from '../user-session/user-session-revocation';
 import { AuthenticatedUserCache } from './authenticated-user-cache';
@@ -149,8 +149,8 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
 	 * sign-out marker of the session the payload names (`token/shared/session-sign-out-marker.ts`), and the token's
 	 * stored record, named by the id it carries (`user-session-revocation.ts`). The marker refuses every token of the
 	 * session, one minted after the sign-out included, whatever its own record says. A token carrying neither claim
-	 * (minted before them) and a token the store does not hold are judged as before. A token still in use gets its
-	 * use recorded, at most every {@link ACCESS_TOKEN_USE_RESOLUTION_MS}, for the session list's last activity.
+	 * (minted before them) and a token the store does not hold are judged as before. An active token gets its use
+	 * recorded, at most every {@link ACCESS_TOKEN_USE_RESOLUTION_MS}, for the session list's last activity.
 	 *
 	 * @param payload - The verified access-token payload.
 	 * @returns True when the token's session was signed out.
@@ -202,12 +202,17 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
 	}
 
 	/**
-	 * Records a use of the token when its last recorded use is older than {@link ACCESS_TOKEN_USE_RESOLUTION_MS}. Not
-	 * awaited: the request never waits for it, and a failed write only leaves the last activity older.
+	 * Records a use of an active token when its last recorded use is older than {@link ACCESS_TOKEN_USE_RESOLUTION_MS}.
+	 * A revoked token (a logged-out one works until it expires) is not listed as a session and is never written: each
+	 * write moves its version, which a session sign-out revising its revocation compares and sets on. Not awaited: the
+	 * request never waits for it, and a failed write only leaves the last activity older.
 	 *
 	 * @param stored - The token's stored record.
 	 */
 	private recordUse(stored: IToken): void {
+		if (stored.status !== TokenStatus.ACTIVE) {
+			return;
+		}
 		const lastUse = new Date(stored.lastUsedAt ?? 0).getTime();
 		const isStale = Date.now() - lastUse >= ACCESS_TOKEN_USE_RESOLUTION_MS;
 		if (!isStale) {

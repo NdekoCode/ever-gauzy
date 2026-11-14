@@ -163,6 +163,19 @@ describe('JwtStrategy: a signed-out session', () => {
 		});
 	});
 
+	it('never records the use of a revoked token: a logged-out one, still usable until it expires', async () => {
+		const { strategy, accessTokenService } = build({
+			id: 'access-token-1',
+			status: TokenStatus.REVOKED,
+			revokedReason: 'User initiated logout',
+			lastUsedAt: new Date(Date.now() - ACCESS_TOKEN_USE_RESOLUTION_MS - 1000)
+		});
+
+		await expect(strategy.validate(payload)).resolves.toMatchObject({ id: 'user-1' });
+
+		expect(accessTokenService.touch).not.toHaveBeenCalled();
+	});
+
 	it('is given the access token store by Nest when the module provides it, as AuthModule does', async () => {
 		const accessTokenService = { findById: jest.fn(), touch: jest.fn() } as unknown as AccessTokenService;
 		const moduleRef = await Test.createTestingModule({
