@@ -2212,9 +2212,11 @@ export class TimeLogService extends TenantAwareCrudService<TimeLog> {
 			}
 
 			// Create the new time log entry. The handler reads it back through this service, whose employee
-			// filter would not find a log written for a member the caller manages.
+			// filter would not find a log written for a member the caller manages. Time added by a person is
+			// recorded in the entry's history.
+			const history = { reason: request.reason ?? null };
 			return await this.withoutEmployeeFilter(() =>
-				this.commandBus.execute(new TimeLogCreateCommand({ ...entry, organizationId }))
+				this.commandBus.execute(new TimeLogCreateCommand({ ...entry, organizationId }, history))
 			);
 		} catch (error) {
 			// Never swallow the reason: a blanket message here hid a real database failure indefinitely.
@@ -2327,8 +2329,9 @@ export class TimeLogService extends TenantAwareCrudService<TimeLog> {
 			// Update the last edited date for the manual time log
 			request.editedAt = new Date();
 
-			// Execute the command to update the time log
-			await this.commandBus.execute(new TimeLogUpdateCommand(request, timeLog));
+			// Execute the command to update the time log, recorded in the entry's history
+			const history = { reason: request.reason ?? null };
+			await this.commandBus.execute(new TimeLogUpdateCommand(request, timeLog, undefined, false, history));
 
 			// Retrieve the updated time log entry (a member's log, for a manager: same scope as the read above)
 			return await this.withoutEmployeeFilter(() => this.findOneByIdString(id));
@@ -2420,8 +2423,8 @@ export class TimeLogService extends TenantAwareCrudService<TimeLog> {
 			}
 		}
 
-		// Invoke the command bus to delete the time logs
-		return await this.commandBus.execute(new TimeLogDeleteCommand(timeLogs, forceDelete));
+		// Invoke the command bus to delete the time logs, recording what each one held in its history
+		return await this.commandBus.execute(new TimeLogDeleteCommand(timeLogs, forceDelete, {}));
 	}
 
 	/**
