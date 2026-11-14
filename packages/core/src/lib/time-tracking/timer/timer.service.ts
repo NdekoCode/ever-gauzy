@@ -336,10 +336,11 @@ export class TimerService {
 		// Calculate last TimeLog duration
 		if (lastLog) {
 			status.lastLog = lastLog;
-			status.running = lastLog.isRunning;
+			// A running break is not a running timer: `lastLog` shows the break, `running` stays false, so a client that
+			// does not know breaks shows the timer stopped and posts no heartbeat slots during it
+			status.running = lastLog.isRunning && !isBreak(lastLog);
 
-			const isWorkRunning = status.running && !isBreak(lastLog);
-			if (isWorkRunning) {
+			if (status.running) {
 				// Today's duration holds only the part of the running log inside today's window: a timer started
 				// before `todayStart` counts from `todayStart`, its earlier part belongs to the day it started on.
 				// `lastLog` stays the whole log, so a client still reads the full session from its `startedAt`.
@@ -500,10 +501,11 @@ export class TimerService {
 				turn.assertHeld();
 			}
 
-			// Update the employee's tracking status to reflect they are now tracking time
+			// Update the employee's tracking status: tracking time when work starts, not during a break, so team
+			// presence and older clients do not read a break as tracked time
 			await this._employeeService.update(employeeId, {
 				isOnline: true,
-				isTrackingTime: true
+				isTrackingTime: !startsBreak
 			});
 
 			this.debug(() => `last created time log: ${JSON.stringify(timeLog)}`);
@@ -1639,7 +1641,8 @@ export class TimerService {
 			if (isBreak(lastLog)) {
 				duration = 0;
 			}
-			const running = lastLog?.isRunning ?? false;
+			// A running break is not a running timer, as in the timer status
+			const running = (lastLog?.isRunning ?? false) && !isBreak(lastLog);
 			const stoppedAt = lastLog?.stoppedAt ? moment(lastLog.stoppedAt) : moment().subtract(1, 'day'); // Default to 1 day ago if stoppedAt is not present
 
 			// Calculate the timer status

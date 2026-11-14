@@ -366,6 +366,25 @@ describe.each([MultiORMEnum.TypeORM, MultiORMEnum.MikroORM])(
 			expect(atWork).toMatchObject({ lastLog: { id: 'work' }, duration: 3600 });
 		});
 
+		it('shows an employee on a running break as paused, not tracking, with the break as the last log', async () => {
+			const coffee = log({
+				id: 'coffee',
+				logType: TimeLogType.BREAK,
+				isRunning: true,
+				startedAt: new Date('2026-10-24T10:00:00.000Z'),
+				stoppedAt: new Date('2026-10-24T10:00:00.000Z')
+			});
+
+			const [onBreak] = await workedStatus([coffee]);
+
+			expect(onBreak).toMatchObject({
+				lastLog: { id: 'coffee', isRunning: true },
+				duration: 0,
+				running: false,
+				timerStatus: 'pause'
+			});
+		});
+
 		it('still returns the latest log of an employee with no running log', async () => {
 			const earlier = log({
 				id: 'earlier',

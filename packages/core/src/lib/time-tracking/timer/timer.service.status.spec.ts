@@ -322,8 +322,10 @@ describe.each([MultiORMEnum.TypeORM, MultiORMEnum.MikroORM])('TimerService.getTi
 
 		const status = await getTimerStatus([worked, lunch, coffee]);
 
-		expect(status.running).toBe(true);
-		expect(status.lastLog).toMatchObject({ id: 'coffee', logType: TimeLogType.BREAK });
+		// The break running now is the last log, and the timer reads stopped: a client that does not know breaks
+		// posts no heartbeat slots during it
+		expect(status.running).toBe(false);
+		expect(status.lastLog).toMatchObject({ id: 'coffee', logType: TimeLogType.BREAK, isRunning: true });
 		expect(status.duration).toBe(HOUR);
 	});
 

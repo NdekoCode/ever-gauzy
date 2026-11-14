@@ -27,6 +27,7 @@ describe('TimerService.startTimer under the organization tracking requirements',
 	let find: jest.Mock;
 	let findOne: jest.Mock;
 	let findOneByUserId: jest.Mock;
+	let updateEmployee: jest.Mock;
 	let stopPreviousRunningTimers: jest.Mock;
 	let organization: Partial<IOrganization>;
 	let teamsOfEmployee: string[];
@@ -85,12 +86,13 @@ describe('TimerService.startTimer under the organization tracking requirements',
 			isTrackingEnabled: true,
 			organization: { id: fixture.organizationId, ...organization }
 		}));
+		updateEmployee = jest.fn();
 		service = new TimerService(
 			{ manager: { find, findOne } } as never,
 			undefined as never,
 			undefined as never,
 			undefined as never,
-			{ findOneByUserId, update: jest.fn() } as never,
+			{ findOneByUserId, update: updateEmployee } as never,
 			{ execute } as never,
 			undefined as never
 		);
@@ -276,6 +278,18 @@ describe('TimerService.startTimer under the organization tracking requirements',
 
 		expect(stopPreviousRunningTimers).toHaveBeenCalled();
 		expect(createdLog()).toMatchObject({ logType: TimeLogType.BREAK, taskId: 'task-1', isBillable: false });
+	});
+
+	it('marks the employee online and not tracking while a break runs, and tracking again when work starts', async () => {
+		organization = { allowBreaks: true };
+
+		await start({ logType: TimeLogType.BREAK });
+		await start({});
+
+		expect(updateEmployee.mock.calls).toEqual([
+			['employee-1', { isOnline: true, isTrackingTime: false }],
+			['employee-1', { isOnline: true, isTrackingTime: true }]
+		]);
 	});
 
 	/** The conflict read answers `conflicts`; every other command answers the new log. */
