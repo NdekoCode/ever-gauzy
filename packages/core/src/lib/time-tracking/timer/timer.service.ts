@@ -832,7 +832,8 @@ export class TimerService {
 	 * and the organization's reason rule. A run of the desktop app or the agent is refused, since they upload its slots
 	 * themselves. An earlier start may not overlap another entry of the caller, and the minutes it adds get their
 	 * ten-minute slots, without activity. A later start goes through the time log update, which releases the slots
-	 * before it, with their screenshots and activity. The log is marked edited, with the reason given.
+	 * before it, with their screenshots and activity. The log is marked edited, with the reason given. The move takes
+	 * the employee's turn, as a start or a stop does (`inEmployeeTurn`).
 	 *
 	 * @param request - The new start, and the reason.
 	 * @returns The running log, the row the timer status answers as its `lastLog`.
@@ -845,6 +846,30 @@ export class TimerService {
 			throw new ForbiddenException(`The time tracking functionality has been disabled for you.`);
 		}
 
+		// With no start, stop or other move of the employee's timer in between, in this process (inEmployeeTurn)
+		return await this.inEmployeeTurn(employee.id, (turn) =>
+			this.moveStartInTurn(request, employee, tenantId, turn)
+		);
+	}
+
+	/**
+	 * Moves the start of the employee's running timer, as `moveRunningTimerStart` says, holding their turn: it reads
+	 * the run once the start or stop before it has settled, and writes no time log once the turn has passed to the
+	 * next one.
+	 *
+	 * @param request - The new start, and the reason.
+	 * @param employee - The caller's employee, with their organization.
+	 * @param tenantId - The caller's tenant.
+	 * @param turn - The employee's turn this move holds.
+	 * @returns The running log.
+	 * @throws RequestTimeoutException when the move took so long that the next start or stop went on.
+	 */
+	private async moveStartInTurn(
+		request: ITimerStartMoveInput,
+		employee: IEmployee,
+		tenantId: ID,
+		turn: EmployeeTurn
+	): Promise<ITimeLog> {
 		const runningLog = await this.getLastRunningLog();
 		const now = moment.utc().toDate();
 		const requestedStart = moment.utc(request.startedAt).toDate();
@@ -900,6 +925,7 @@ export class TimerService {
 
 		// The move is written only while the run still runs from the start it was checked against: a stop that landed
 		// since keeps its end, another move's start is checked again, and nothing moves.
+		turn.assertHeld();
 		const written = await this.typeOrmTimeLogRepository.update(
 			{ id: runningLog.id, tenantId, isRunning: true, startedAt: before.startedAt },
 			write
@@ -913,6 +939,7 @@ export class TimerService {
 		// of its own (`manualTimeSlot`): a run whose stop gives it the slots of its whole range must keep having none.
 		const leftTimesheetId = before.timesheetId;
 		const knownRun = Object.assign(before, { stoppedAt: now });
+		turn.assertHeld();
 		const moved: ITimeLog = await this._commandBus.execute(new TimeLogUpdateCommand(changes, knownRun, true));
 
 		// The update recalculated the timesheet the run is now under, not the one a start moved to another week left

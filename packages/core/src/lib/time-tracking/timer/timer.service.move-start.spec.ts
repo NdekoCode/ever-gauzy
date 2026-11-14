@@ -1,7 +1,7 @@
 // Must stay first: see timer.service.spec.ts.
 import '../../core/entities/internal';
 
-import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, RequestTimeoutException } from '@nestjs/common';
 import * as moment from 'moment';
 import { ITimeLog, PermissionsEnum, TimeLogSourceEnum } from '@gauzy/contracts';
 import { RequestContext } from '../../core/context';
@@ -657,6 +657,78 @@ describe.each([MultiORMEnum.TypeORM, MultiORMEnum.MikroORM])(
 			expect(rows[0]).toMatchObject({ isRunning: true, startedAt: at('09:40'), stoppedAt: at('09:40') });
 			expect(linkedSlots()).toEqual([]);
 			expect(endWhenReplacedAt(service, rows[0], at('12:00'))).toEqual(at('12:00'));
+		});
+
+		/** A turn of the employee that passes to the next start or stop once it was checked `checksHeld` times. */
+		const turnPassingAfter = (checksHeld: number) => {
+			let checks = 0;
+			return {
+				isHeld: () => checks < checksHeld,
+				assertHeld: () => {
+					checks += 1;
+					if (checks > checksHeld) {
+						throw new RequestTimeoutException('A later start or stop went ahead.');
+					}
+				}
+			};
+		};
+
+		it("waits for the stop in the employee's turn, then finds no timer running and moves nothing", async () => {
+			const rows = [runningLog()];
+			const { service, typeOrmTimeLogRepository } = createService(ormType, rows, employeeIn(openOrganization));
+			let settleStop = (): void => undefined;
+			const stop = service['inEmployeeTurn'](EMPLOYEE_ID, async () => {
+				await new Promise<void>((resolve) => {
+					settleStop = resolve;
+				});
+				Object.assign(rows[0], { isRunning: false, stoppedAt: at('09:58') });
+			});
+
+			const move = service.moveRunningTimerStart({ startedAt: at('09:00') });
+			await new Promise((resolve) => setImmediate(resolve));
+			settleStop();
+			await stop;
+
+			await expect(move).rejects.toBeInstanceOf(BadRequestException);
+			expect(typeOrmTimeLogRepository.update).not.toHaveBeenCalled();
+			expect(rows[0]).toMatchObject({ isRunning: false, startedAt: RUNNING_SINCE, stoppedAt: at('09:58') });
+		});
+
+		it("writes nothing once the employee's turn has passed to the next start or stop", async () => {
+			const rows = [runningLog()];
+			const { service, typeOrmTimeLogRepository, commandsOf } = createService(
+				ormType,
+				rows,
+				employeeIn(openOrganization)
+			);
+			jest.spyOn(service as any, 'inEmployeeTurn').mockImplementation(
+				(_employeeId: string, work: (turn: unknown) => Promise<unknown>) => work(turnPassingAfter(0))
+			);
+
+			await expect(service.moveRunningTimerStart({ startedAt: at('09:00') })).rejects.toBeInstanceOf(
+				RequestTimeoutException
+			);
+			expect(typeOrmTimeLogRepository.update).not.toHaveBeenCalled();
+			expect(commandsOf(TimeLogUpdateCommand)).toHaveLength(0);
+			expect(rows[0].startedAt).toEqual(RUNNING_SINCE);
+		});
+
+		it('sends no time log update once the turn passes after the start was written', async () => {
+			const rows = [runningLog()];
+			const { service, typeOrmTimeLogRepository, commandsOf } = createService(
+				ormType,
+				rows,
+				employeeIn(openOrganization)
+			);
+			jest.spyOn(service as any, 'inEmployeeTurn').mockImplementation(
+				(_employeeId: string, work: (turn: unknown) => Promise<unknown>) => work(turnPassingAfter(1))
+			);
+
+			await expect(service.moveRunningTimerStart({ startedAt: at('09:00') })).rejects.toBeInstanceOf(
+				RequestTimeoutException
+			);
+			expect(typeOrmTimeLogRepository.update).toHaveBeenCalledTimes(1);
+			expect(commandsOf(TimeLogUpdateCommand)).toHaveLength(0);
 		});
 	}
 );
