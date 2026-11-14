@@ -1307,8 +1307,9 @@ export class TimerService {
 	 * heartbeat (`postsHeartbeatSlots`: Ever Teams, mobile), its start counting as the first: one without any died in
 	 * its first minute, and ends at its start, as Ever Teams' own stale-timer guard ends it. A run left in a tab closed
 	 * without a stop is not credited with every hour up to the next start. A run of a client that sends no heartbeat
-	 * (the web timer, the API clients) ends at `nextRunStartedAt`, as an explicit stop then would. Never after
-	 * `nextRunStartedAt`, so no time counts twice, and never before its own start.
+	 * (the web timer, the API clients) ends at `nextRunStartedAt`, as an explicit stop then would. So does a break,
+	 * which holds no time slots and has no heartbeat whatever its client. Never after `nextRunStartedAt`, so no time
+	 * counts twice, and never before its own start.
 	 *
 	 * @param log - The running log, with its time slots.
 	 * @param nextRunStartedAt - When the run after it started.
@@ -1322,7 +1323,7 @@ export class TimerService {
 		const lastHeartbeat = moment.max(moment.utc(log.stoppedAt), ...timeSlotEnds);
 		const hasHadHeartbeat = lastHeartbeat.isAfter(startedAt) || timeSlotEnds.length > 0;
 		// A client that posts heartbeats counts the start as the first one: a run of theirs without any ends there
-		const endsAtLastHeartbeat = hasHadHeartbeat || postsHeartbeatSlots(log.source);
+		const endsAtLastHeartbeat = !isBreak(log) && (hasHadHeartbeat || postsHeartbeatSlots(log.source));
 		const end = endsAtLastHeartbeat ? moment.min(lastHeartbeat, nextRunStartedAt) : nextRunStartedAt;
 		return moment.max(startedAt, end).toDate();
 	}
