@@ -1126,17 +1126,18 @@ export class TimerService {
 
 	/**
 	 * The employee's slot that starts a ten-minute window, created without activity for the seconds the run covers in
-	 * it when there is none. A slot already there (the neighbouring entry's, in the window both share) is reused.
+	 * it when there is none. A slot already there (the neighbouring entry's, in the window both share) is reused, and
+	 * gains those seconds, which no other entry of the employee covers (`assertNoEntryBetween`), keeping its activity.
 	 *
 	 * @param manager - The transaction's entity manager.
 	 * @param run - The run the window belongs to.
-	 * @param window - The window, with the seconds the run covers in it.
+	 * @param window - The window, from its start to its end, with the seconds the run covers in it.
 	 * @returns The slot's id.
 	 */
 	private async slotOfWindow(
 		manager: EntityManager,
 		run: ITimeLog,
-		window: { startedAt: Date; duration: number }
+		window: { startedAt: Date; stoppedAt: Date; duration: number }
 	): Promise<ID> {
 		const { employeeId, organizationId, tenantId } = run;
 		const windowStart = moment.utc(window.startedAt).startOf('minute');
@@ -1144,6 +1145,13 @@ export class TimerService {
 		const where = { tenantId, organizationId, employeeId, startedAt } as FindOptionsWhere<TimeSlot>;
 		const existing = await manager.findOne(TimeSlot, { where });
 		if (existing) {
+			const heldSeconds = Number(existing.duration ?? 0);
+			const windowSeconds = moment.utc(window.stoppedAt).diff(windowStart, 'seconds');
+			const sharedSeconds = Math.min(heldSeconds + window.duration, windowSeconds);
+			const gainsSeconds = sharedSeconds > heldSeconds;
+			if (gainsSeconds) {
+				await manager.update(TimeSlot, { id: existing.id }, { duration: sharedSeconds });
+			}
 			return existing.id;
 		}
 

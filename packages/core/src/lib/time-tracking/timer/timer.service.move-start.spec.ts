@@ -96,6 +96,8 @@ interface Organization {
 interface Setup {
 	/** The slots linked to the run before the move (a heartbeat's, say). */
 	slots?: SlotRow[];
+	/** Slots of her other entries, not linked to the run: a neighbour's, in a window both share. */
+	neighbourSlots?: SlotRow[];
 	/** A stop of the run that lands between the move's checks and its write. */
 	stopLandsBeforeTheWrite?: boolean;
 	/** Another move of the run's start that lands between this move's checks and its write. */
@@ -112,9 +114,15 @@ function createService(
 	employee: Record<string, unknown>,
 	setup: Setup = {}
 ) {
-	const { slots = [], stopLandsBeforeTheWrite = false, startMovesBeforeTheWrite, slotLinkFails = false } = setup;
+	const {
+		slots = [],
+		neighbourSlots = [],
+		stopLandsBeforeTheWrite = false,
+		startMovesBeforeTheWrite,
+		slotLinkFails = false
+	} = setup;
 	/** Every slot of the employee, by id, and the ids of those linked to the run. */
-	const pool = new Map<string, SlotRow>(slots.map((slot) => [slot.id, { ...slot }]));
+	const pool = new Map<string, SlotRow>([...slots, ...neighbourSlots].map((slot) => [slot.id, { ...slot }]));
 	const linked = new Set<string>(slots.map((slot) => slot.id));
 
 	const relation = {
@@ -417,6 +425,22 @@ describe.each([MultiORMEnum.TypeORM, MultiORMEnum.MikroORM])(
 			await expect(service.moveRunningTimerStart({ startedAt: at('09:00') })).rejects.toThrow('connection lost');
 
 			expect(linkedSlots()).toEqual(['09:20:300:42']);
+		});
+
+		it('gives the slot it shares with the entry before it the seconds it adds there, keeping its activity', async () => {
+			// Her entry from 8:30 to 9:01 holds 60 seconds of the 9:00 slot, with activity
+			const entryUntil0901 = timeLog({ id: EARLIER_LOG_ID, startedAt: at('08:30'), stoppedAt: at('09:01') });
+			const sharedSlot: SlotRow = { id: 'slot-0900', startedAt: at('09:00'), duration: 60, keyboard: 7 };
+			const rows = [entryUntil0901, runningLog()];
+			const { service, linkedSlots } = createService(ormType, rows, employeeIn(openOrganization), {
+				slots: [heartbeatSlot()],
+				neighbourSlots: [sharedSlot]
+			});
+
+			await service.moveRunningTimerStart({ startedAt: at('09:01') });
+
+			// The 9:00 slot keeps the entry's 60 seconds and its activity, and gains the run's 540 from 9:01
+			expect(linkedSlots()).toEqual(['09:00:600:7', '09:10:600:0', '09:20:600:42']);
 		});
 
 		it('never lowers the seconds a slot already holds', async () => {
