@@ -69,7 +69,7 @@ import {
 	teamIdForEntry
 } from '../time-log/organization-tracking-requirements';
 import { isTrackerSource, postsHeartbeatSlots } from '../time-log/tracker-source';
-import { assertBreakOverlapsNothing, assertBreaksAllowedIn, isBreak } from '../time-log/break-rules';
+import { assertBreakOverlapsNothing, assertBreaksAllowedIn, breakEnd, isBreak } from '../time-log/break-rules';
 import { TypeOrmTimeLogRepository } from '../time-log/repository/type-orm-time-log.repository';
 import { MikroOrmTimeLogRepository } from '../time-log/repository/mikro-orm-time-log.repository';
 import { TypeOrmEmployeeRepository } from '../../employee/repository/type-orm-employee.repository';
@@ -1316,6 +1316,10 @@ export class TimerService {
 	 * @returns Where it ends.
 	 */
 	private replacedRunEnd(log: ITimeLog, nextRunStartedAt: moment.Moment): Date {
+		// A break has no heartbeat, whatever its client: it ends where the run that replaces it starts
+		if (isBreak(log)) {
+			return breakEnd(log, nextRunStartedAt.toDate());
+		}
 		const startedAt = moment.utc(log.startedAt);
 		const timeSlotEnds = (log.timeSlots ?? []).map((slot) =>
 			moment.utc(slot.startedAt).add(slot.duration, 'seconds')
@@ -1323,7 +1327,7 @@ export class TimerService {
 		const lastHeartbeat = moment.max(moment.utc(log.stoppedAt), ...timeSlotEnds);
 		const hasHadHeartbeat = lastHeartbeat.isAfter(startedAt) || timeSlotEnds.length > 0;
 		// A client that posts heartbeats counts the start as the first one: a run of theirs without any ends there
-		const endsAtLastHeartbeat = !isBreak(log) && (hasHadHeartbeat || postsHeartbeatSlots(log.source));
+		const endsAtLastHeartbeat = hasHadHeartbeat || postsHeartbeatSlots(log.source);
 		const end = endsAtLastHeartbeat ? moment.min(lastHeartbeat, nextRunStartedAt) : nextRunStartedAt;
 		return moment.max(startedAt, end).toDate();
 	}

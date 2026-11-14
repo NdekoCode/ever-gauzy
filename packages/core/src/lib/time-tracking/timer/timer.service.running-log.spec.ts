@@ -645,15 +645,28 @@ describe.each([MultiORMEnum.TypeORM, MultiORMEnum.MikroORM])(
 			}
 		);
 
-		it('ends an Ever Teams break where the new run starts: a break has no heartbeat, whatever its client', async () => {
+		it.each([TimeLogSourceEnum.TEAMS, TimeLogSourceEnum.MOBILE, TimeLogSourceEnum.WEB_TIMER])(
+			'ends a %s break where the new run starts: a break has no heartbeat, whatever its client',
+			async (source) => {
+				const rows = [run('replaced', source, TWO_HOURS_AGO)];
+				Object.assign(rows[0], { logType: TimeLogType.BREAK });
+				const { service } = setup(rows);
+
+				await startOnDesktop(service);
+
+				// 02:00, where work starts again, not 00:00 as for a run whose client died before its first heartbeat
+				expect(rows[0]).toMatchObject({ isRunning: false, stoppedAt: NOW });
+			}
+		);
+
+		it('ends a break at its own start when the new run is named to start before it', async () => {
 			const rows = [run('replaced', TimeLogSourceEnum.TEAMS, TWO_HOURS_AGO)];
 			Object.assign(rows[0], { logType: TimeLogType.BREAK });
 			const { service } = setup(rows);
 
-			await startOnDesktop(service);
+			await startOnDesktop(service, new Date(TWO_HOURS_AGO.getTime() - 60_000));
 
-			// 02:00, where work starts again, not 00:00 as for a run whose client died before its first heartbeat
-			expect(rows[0]).toMatchObject({ isRunning: false, stoppedAt: NOW });
+			expect(rows[0]).toMatchObject({ isRunning: false, stoppedAt: TWO_HOURS_AGO });
 		});
 
 		it('ends it at the start the new run names', async () => {
