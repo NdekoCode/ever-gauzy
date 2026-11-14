@@ -85,7 +85,7 @@ export class TimeLogHistoryService {
 		const builder = this.typeOrmTimeLogRepository.manager
 			.createQueryBuilder(ActivityLog, 'history')
 			.withDeleted()
-			.innerJoin(TimeLog, 'entry', p(`"entry"."id" = "history"."entityId"`))
+			.innerJoin(TimeLog, 'entry', entryJoinCondition())
 			.where(p(`"history"."entity" = :entity`), { entity: BaseEntityEnum.TimeLog })
 			.andWhere(p(`"history"."deletedAt" IS NULL`))
 			.andWhere(p(`"history"."tenantId" = :tenantId`), { tenantId })
@@ -167,6 +167,22 @@ export class TimeLogHistoryService {
 			}
 		}
 	}
+}
+
+/**
+ * The join of a history row to its entry. `activity_log.entityId` is a varchar and `time_log.id` a uuid on
+ * PostgreSQL, so the id is compared as text there, as the request approvals join their requests.
+ */
+function entryJoinCondition(): string {
+	if (isPostgres()) {
+		return `"entry"."id"::"varchar" = "history"."entityId"`;
+	}
+	if (isMySQL()) {
+		return p(
+			`CAST("entry"."id" AS CHAR) COLLATE utf8mb4_unicode_ci = "history"."entityId" COLLATE utf8mb4_unicode_ci`
+		);
+	}
+	return `"entry"."id" = "history"."entityId"`;
 }
 
 /** The `updatedFields` column as text, on each database (jsonb on PostgreSQL, json on MySQL, text on SQLite). */
