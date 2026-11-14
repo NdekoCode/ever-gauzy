@@ -1,5 +1,6 @@
+import { Optional } from '@nestjs/common';
 import { ICommandHandler, CommandBus, CommandHandler } from '@nestjs/cqrs';
-import { In, DeleteResult, Repository, UpdateResult } from 'typeorm';
+import { DataSource, In, DeleteResult, Repository, UpdateResult } from 'typeorm';
 import { pluck } from 'underscore';
 import { ID } from '@gauzy/contracts';
 import { TimesheetRecalculateCommand } from './../../../timesheet/commands/timesheet-recalculate.command';
@@ -17,7 +18,9 @@ export class TimeLogDeleteHandler implements ICommandHandler<TimeLogDeleteComman
 	constructor(
 		readonly typeOrmTimeLogRepository: TypeOrmTimeLogRepository,
 		readonly mikroOrmTimeLogRepository: MikroOrmTimeLogRepository,
-		private readonly _commandBus: CommandBus
+		private readonly _commandBus: CommandBus,
+		// Records the history of a change a person makes; a handler built without it writes as before.
+		@Optional() private readonly dataSource?: DataSource
 	) {}
 
 	/**
@@ -143,10 +146,11 @@ export class TimeLogDeleteHandler implements ICommandHandler<TimeLogDeleteComman
 		forceDelete: boolean,
 		history: TimeLogHistoryOptions | undefined
 	): Promise<DeleteResult | UpdateResult> {
-		if (!history) {
+		const recordsHistory = Boolean(history) && Boolean(this.dataSource);
+		if (!recordsHistory) {
 			return this.deleteTimeLogs(timeLogs, forceDelete);
 		}
-		return this.typeOrmTimeLogRepository.manager.transaction(async (manager) => {
+		return this.dataSource.transaction(async (manager) => {
 			const result = await this.deleteTimeLogs(timeLogs, forceDelete, manager.getRepository(TimeLog));
 			const records = timeLogs.map((timeLog) => ({
 				subject: historySubject(timeLog),

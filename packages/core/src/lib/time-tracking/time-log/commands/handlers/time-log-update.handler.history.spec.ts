@@ -39,23 +39,26 @@ describe('TimeLogUpdateHandler: history of an edit', () => {
 		const transactionManager = { getRepository: jest.fn(() => transactionRepository) };
 		const repository = {
 			update: jest.fn(async () => ({ affected: 1 })),
-			findOneBy: jest.fn(async () => storedLog()),
-			manager: { transaction: jest.fn(async (work: (manager: unknown) => unknown) => work(transactionManager)) }
+			findOneBy: jest.fn(async () => storedLog())
+		};
+		const dataSource = {
+			transaction: jest.fn(async (work: (manager: unknown) => unknown) => work(transactionManager))
 		};
 		const handler = new TimeLogUpdateHandler(
 			{ execute: jest.fn() } as never,
 			repository as never,
 			{} as never,
 			{} as never,
-			{ generateTimeSlots: jest.fn(() => []) } as never
+			{ generateTimeSlots: jest.fn(() => []) } as never,
+			dataSource as never
 		);
 		const record = recordTimeLogHistory as jest.Mock;
 		record.mockClear();
-		return { handler, repository, transactionManager, transactionRepository, record };
+		return { handler, repository, dataSource, transactionManager, transactionRepository, record };
 	}
 
 	it('writes the edit and its row in one transaction, with what changed and the reason', async () => {
-		const { handler, repository, transactionManager, transactionRepository, record } = setup();
+		const { handler, repository, dataSource, transactionManager, transactionRepository, record } = setup();
 
 		await handler.execute(
 			new TimeLogUpdateCommand(
@@ -69,7 +72,7 @@ describe('TimeLogUpdateHandler: history of an edit', () => {
 			)
 		);
 
-		expect(repository.manager.transaction).toHaveBeenCalledTimes(1);
+		expect(dataSource.transaction).toHaveBeenCalledTimes(1);
 		expect(repository.update).not.toHaveBeenCalled();
 		expect(transactionRepository.update).toHaveBeenCalledWith(
 			{ id: 'log-1', tenantId: 'tenant-1' },
@@ -96,11 +99,11 @@ describe('TimeLogUpdateHandler: history of an edit', () => {
 	});
 
 	it('writes alone, without a transaction or a row, when no history option is given', async () => {
-		const { handler, repository, record } = setup();
+		const { handler, repository, dataSource, record } = setup();
 
 		await handler.execute(new TimeLogUpdateCommand({ description: 'Pairing with Amina' }, storedLog()));
 
-		expect(repository.manager.transaction).not.toHaveBeenCalled();
+		expect(dataSource.transaction).not.toHaveBeenCalled();
 		expect(repository.update).toHaveBeenCalledTimes(1);
 		expect(record).not.toHaveBeenCalled();
 	});

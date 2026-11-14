@@ -1,4 +1,6 @@
+import { Optional } from '@nestjs/common';
 import { ICommandHandler, CommandBus, CommandHandler } from '@nestjs/cqrs';
+import { DataSource } from 'typeorm';
 import * as moment from 'moment';
 import { TimeLogType, TimeLogSourceEnum, ID, ITimeSlot, ITimesheet } from '@gauzy/contracts';
 import { TimeSlotService } from '../../../time-slot/time-slot.service';
@@ -50,7 +52,9 @@ export class TimeLogCreateHandler implements ICommandHandler<TimeLogCreateComman
 		readonly mikroOrmTimeLogRepository: MikroOrmTimeLogRepository,
 		private readonly _commandBus: CommandBus,
 		private readonly _timeSlotService: TimeSlotService,
-		private readonly _timeLogService: TimeLogService
+		private readonly _timeLogService: TimeLogService,
+		// Records the history of a change a person makes; a handler built without it writes as before.
+		@Optional() private readonly dataSource?: DataSource
 	) {}
 
 	/**
@@ -113,12 +117,13 @@ export class TimeLogCreateHandler implements ICommandHandler<TimeLogCreateComman
 	 * @returns TimeLog
 	 */
 	private async saveTimeLog(timeLog: TimeLog, history: TimeLogHistoryOptions | undefined): Promise<void> {
-		if (!history) {
+		const recordsHistory = Boolean(history) && Boolean(this.dataSource);
+		if (!recordsHistory) {
 			await this.typeOrmTimeLogRepository.save(timeLog);
 			return;
 		}
 		// Added by a person: the entry and its history row are written together, or neither is.
-		await this.typeOrmTimeLogRepository.manager.transaction(async (manager) => {
+		await this.dataSource.transaction(async (manager) => {
 			await manager.getRepository(TimeLog).save(timeLog);
 			await recordTimeLogHistory(manager, [
 				{ subject: historySubject(timeLog), change: createdChange(timeLog), reason: history.reason }

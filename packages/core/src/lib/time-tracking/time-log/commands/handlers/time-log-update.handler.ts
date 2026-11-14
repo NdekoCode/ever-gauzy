@@ -1,7 +1,7 @@
-import { Logger, NotFoundException } from '@nestjs/common';
+import { Logger, NotFoundException, Optional } from '@nestjs/common';
 import { ICommandHandler, CommandBus, CommandHandler } from '@nestjs/cqrs';
 import * as moment from 'moment';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { ID, ITimeLog, ITimeSlot, ITimesheet, TimeLogSourceEnum } from '@gauzy/contracts';
 import { isEmpty } from '@gauzy/utils';
 import { TimesheetFirstOrCreateCommand, TimesheetRecalculateCommand } from './../../../timesheet/commands';
@@ -51,7 +51,9 @@ export class TimeLogUpdateHandler implements ICommandHandler<TimeLogUpdateComman
 		private readonly typeOrmTimeLogRepository: TypeOrmTimeLogRepository,
 		private readonly typeOrmTimeSlotRepository: TypeOrmTimeSlotRepository,
 		private readonly mikroOrmTimeSlotRepository: MikroOrmTimeSlotRepository,
-		private readonly timeSlotService: TimeSlotService
+		private readonly timeSlotService: TimeSlotService,
+		// Records the history of a change a person makes; a handler built without it writes as before.
+		@Optional() private readonly dataSource?: DataSource
 	) {}
 
 	/**
@@ -524,10 +526,11 @@ export class TimeLogUpdateHandler implements ICommandHandler<TimeLogUpdateComman
 		history: TimeLogHistoryOptions | undefined,
 		write: (repository: Repository<TimeLog>) => Promise<T>
 	): Promise<T> {
-		if (!history) {
+		const recordsHistory = Boolean(history) && Boolean(this.dataSource);
+		if (!recordsHistory) {
 			return write(this.typeOrmTimeLogRepository);
 		}
-		return this.typeOrmTimeLogRepository.manager.transaction(async (manager) => {
+		return this.dataSource.transaction(async (manager) => {
 			const result = await write(manager.getRepository(TimeLog));
 			const edited = { ...stored, ...changes } as ITimeLog;
 			const change = updatedChange(stored, edited);

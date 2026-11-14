@@ -35,27 +35,29 @@ describe('TimeLogDeleteHandler: history of a deletion', () => {
 		const transactionRepository = { softDelete: jest.fn(async () => ({ affected: 2 })) };
 		const transactionManager = { getRepository: jest.fn(() => transactionRepository) };
 		const repository = {
-			softDelete: jest.fn(async () => ({ affected: 2 })),
-			manager: { transaction: jest.fn(async (work: (manager: unknown) => unknown) => work(transactionManager)) }
+			softDelete: jest.fn(async () => ({ affected: 2 }))
+		};
+		const dataSource = {
+			transaction: jest.fn(async (work: (manager: unknown) => unknown) => work(transactionManager))
 		};
 		const commandBus = { execute: jest.fn(async () => undefined) };
-		const handler = new TimeLogDeleteHandler(repository as never, {} as never, commandBus as never);
+		const handler = new TimeLogDeleteHandler(repository as never, {} as never, commandBus as never, dataSource as never);
 		const record = recordTimeLogHistory as jest.Mock;
 		record.mockClear();
-		return { handler, repository, transactionManager, transactionRepository, record };
+		return { handler, repository, dataSource, transactionManager, transactionRepository, record };
 	}
 
 	beforeEach(() => jest.spyOn(console, 'log').mockImplementation(() => undefined));
 	afterEach(() => jest.restoreAllMocks());
 
 	it('deletes the entries and records what each held, in one transaction', async () => {
-		const { handler, repository, transactionManager, transactionRepository, record } = setup();
+		const { handler, repository, dataSource, transactionManager, transactionRepository, record } = setup();
 
 		await handler.execute(
 			new TimeLogDeleteCommand([entry('log-1', 'task-login'), entry('log-2', 'task-signup')], false, {})
 		);
 
-		expect(repository.manager.transaction).toHaveBeenCalledTimes(1);
+		expect(dataSource.transaction).toHaveBeenCalledTimes(1);
 		expect(repository.softDelete).not.toHaveBeenCalled();
 		expect(transactionRepository.softDelete).toHaveBeenCalledTimes(1);
 		const [manager, records] = record.mock.calls[0];
@@ -67,11 +69,11 @@ describe('TimeLogDeleteHandler: history of a deletion', () => {
 	});
 
 	it('deletes alone, without a transaction or rows, when no history option is given', async () => {
-		const { handler, repository, record } = setup();
+		const { handler, repository, dataSource, record } = setup();
 
 		await handler.execute(new TimeLogDeleteCommand([entry('log-1', 'task-login')], false));
 
-		expect(repository.manager.transaction).not.toHaveBeenCalled();
+		expect(dataSource.transaction).not.toHaveBeenCalled();
 		expect(repository.softDelete).toHaveBeenCalledTimes(1);
 		expect(record).not.toHaveBeenCalled();
 	});

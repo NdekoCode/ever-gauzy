@@ -35,7 +35,7 @@ const EMPLOYEE_ID = 'employee-1';
 const STARTED_AT = new Date('2026-10-24T09:00:00.000Z');
 const STOPPED_AT = new Date('2026-10-24T09:30:00.000Z');
 
-function createHandler() {
+function createHandler(dataSource?: unknown) {
 	const saved: TimeLog[] = [];
 	const typeOrmTimeLogRepository = {
 		save: jest.fn(async (timeLog: TimeLog) => {
@@ -61,7 +61,8 @@ function createHandler() {
 		{} as any,
 		commandBus as any,
 		timeSlotService as any,
-		timeLogService as any
+		timeLogService as any,
+		dataSource as never
 	);
 	return { handler, saved, timeSlotService };
 }
@@ -206,22 +207,21 @@ describe('TimeLogCreateHandler: history of time added by hand', () => {
 	afterEach(() => jest.restoreAllMocks());
 
 	function createHandlerWithTransaction() {
-		const { handler } = createHandler();
 		const transactionRepository = { save: jest.fn(async (timeLog: TimeLog) => timeLog) };
 		const transactionManager = { getRepository: jest.fn(() => transactionRepository) };
-		type RepositoryDouble = { save: jest.Mock; manager?: { transaction: jest.Mock } };
-		const repository = (handler as unknown as { typeOrmTimeLogRepository: RepositoryDouble })
-			.typeOrmTimeLogRepository;
-		repository.manager = {
+		const dataSource = {
 			transaction: jest.fn(async (work: (manager: unknown) => Promise<void>) => work(transactionManager))
 		};
+		const { handler } = createHandler(dataSource);
+		const repository = (handler as unknown as { typeOrmTimeLogRepository: { save: jest.Mock } })
+			.typeOrmTimeLogRepository;
 		const record = recordTimeLogHistory as jest.Mock;
 		record.mockClear();
-		return { handler, repository, transactionManager, transactionRepository, record };
+		return { handler, repository, dataSource, transactionManager, transactionRepository, record };
 	}
 
 	it('writes the entry and its "created" row in one transaction, with the reason given', async () => {
-		const { handler, repository, transactionManager, transactionRepository, record } =
+		const { handler, repository, dataSource, transactionManager, transactionRepository, record } =
 			createHandlerWithTransaction();
 
 		await handler.execute(
@@ -230,7 +230,7 @@ describe('TimeLogCreateHandler: history of time added by hand', () => {
 			})
 		);
 
-		expect(repository.manager.transaction).toHaveBeenCalledTimes(1);
+		expect(dataSource.transaction).toHaveBeenCalledTimes(1);
 		expect(repository.save).not.toHaveBeenCalled();
 		expect(transactionRepository.save).toHaveBeenCalledTimes(1);
 		const [manager, [entry]] = record.mock.calls[0];
@@ -241,11 +241,11 @@ describe('TimeLogCreateHandler: history of time added by hand', () => {
 	});
 
 	it('records nothing, and opens no transaction, for a log written without a history option', async () => {
-		const { handler, repository, record } = createHandlerWithTransaction();
+		const { handler, repository, dataSource, record } = createHandlerWithTransaction();
 
 		await handler.execute(new TimeLogCreateCommand(input({ stoppedAt: STOPPED_AT })));
 
-		expect(repository.manager.transaction).not.toHaveBeenCalled();
+		expect(dataSource.transaction).not.toHaveBeenCalled();
 		expect(repository.save).toHaveBeenCalledTimes(1);
 		expect(record).not.toHaveBeenCalled();
 	});
