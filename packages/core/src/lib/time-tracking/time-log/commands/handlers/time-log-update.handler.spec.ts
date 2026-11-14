@@ -159,3 +159,32 @@ describe('TimeLogUpdateHandler release of slots read through MikroORM', () => {
 		expect(release).toEqual({ remove: ['slot-alone'], unlink: ['slot-shared'] });
 	});
 });
+
+/**
+ * An update that gives the log no slot of its own re-saved the row it had just read back. TypeORM writes every column
+ * that differs from the database at save time, so a timer stop landing between that read and that save was undone:
+ * the log ran again, with its old end. Such an update now writes the row once, through its targeted update only.
+ */
+describe('TimeLogUpdateHandler writes a log once when it gives it no slot', () => {
+	beforeEach(() => {
+		jest.spyOn(console, 'log').mockImplementation(() => undefined);
+		jest.spyOn(RequestContext, 'currentTenantId').mockReturnValue(TENANT_A);
+	});
+	afterEach(() => jest.restoreAllMocks());
+
+	it('never re-saves the row it read back', async () => {
+		const { handler } = createHandler();
+		(handler as any).commandBus.execute.mockResolvedValue({ id: 'timesheet-1' });
+		jest.spyOn(handler as any, 'planRelease').mockResolvedValue({ remove: [], unlink: [] });
+		jest.spyOn(handler as any, 'applyRelease').mockResolvedValue(undefined);
+		jest.spyOn(handler as any, 'recalculateTimesheetAndEmployeeHours').mockResolvedValue(undefined);
+		const save = jest.spyOn(handler as any, 'saveUpdatedTimeLog').mockResolvedValue(undefined);
+
+		// A start moved by the timer: the update makes no slot of its own (manualTimeSlot)
+		await handler.execute(
+			new TimeLogUpdateCommand({ startedAt: new Date('2026-01-05T09:00:00.000Z') } as any, 'log-own', true)
+		);
+
+		expect(save).not.toHaveBeenCalled();
+	});
+});

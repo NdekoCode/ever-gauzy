@@ -173,6 +173,9 @@ export class TimeLogUpdateHandler implements ICommandHandler<TimeLogUpdateComman
 				// and the ones they already had there (another of their logs may share a ten-minute slot) — and, as
 				// TimeLogCreateHandler does, it becomes the log's slots, so the save links the log to each of them, an
 				// existing slot included.
+				// Only that save writes something the targeted update above did not. Saving the row read back otherwise
+				// would write every column a concurrent call changed since (a timer stop's `isRunning` and `stoppedAt`
+				// included) back to what it read, so it is saved only when it takes slots.
 				if (takesRangeSlots) {
 					timeLog.timeSlots = await this.bulkCreateTimeSlots(
 						updateTimeSlots,
@@ -181,10 +184,10 @@ export class TimeLogUpdateHandler implements ICommandHandler<TimeLogUpdateComman
 						organizationId,
 						tenantId
 					);
-				}
 
-				// Update the time log in the repository (a failure propagates, before any slot is released)
-				await this.saveUpdatedTimeLog(timeLog);
+					// Update the time log in the repository (a failure propagates, before any slot is released)
+					await this.saveUpdatedTimeLog(timeLog);
+				}
 			}
 		}
 
