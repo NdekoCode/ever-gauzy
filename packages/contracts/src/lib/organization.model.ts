@@ -91,6 +91,8 @@ export interface IOrganization
 	requireClient?: boolean;
 	requireTeam?: boolean;
 	restrictTrackingSwitchToHigherRoles?: boolean;
+	/** Whether time logs keep the rates they were recorded at: a rate change without a day prices only new time. */
+	timeLogsKeepTheirRates?: boolean | null;
 	timeFormat?: TimeFormatEnum;
 	defaultStartTime?: string;
 	defaultEndTime?: string;

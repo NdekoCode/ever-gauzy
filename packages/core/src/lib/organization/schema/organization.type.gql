@@ -152,6 +152,11 @@ type Organization {
 	Off by default: whoever may edit the employee or the membership may switch it.
 	"""
 	restrictTrackingSwitchToHigherRoles: Boolean!
+	"""
+	Whether time logs keep the rates they were recorded at: a rate change without a day then prices only the time
+	recorded from then on. Off when null, as before the setting: a rate change prices all the time already tracked.
+	"""
+	timeLogsKeepTheirRates: Boolean
 	"Whether the organization renders times on a 12- or a 24-hour clock."
 	timeFormat: Int!
 	"Whether a document's tax and its discount are stated as separate lines."

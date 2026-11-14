@@ -387,6 +387,17 @@ export class Organization extends TenantBaseEntity implements IOrganization {
 	@MultiORMColumn({ default: false })
 	restrictTrackingSwitchToHigherRoles?: boolean;
 
+	/**
+	 * Whether the organization's time logs keep the rates they were recorded at. On, a rate change without a day
+	 * prices only the time recorded from then on, and a change with a day re-prices the time from that day. Off (empty)
+	 * by default, as before the setting: a rate change without a day prices all the time already tracked.
+	 */
+	@ApiPropertyOptional({ type: () => Boolean })
+	@IsOptional()
+	@IsBoolean()
+	@MultiORMColumn({ nullable: true })
+	timeLogsKeepTheirRates?: boolean;
+
 	@MultiORMColumn({ default: 12 })
 	timeFormat?: 12 | 24;
 
