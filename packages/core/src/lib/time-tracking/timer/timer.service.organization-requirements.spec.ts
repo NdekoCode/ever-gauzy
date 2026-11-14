@@ -305,6 +305,30 @@ describe('TimerService.startTimer under the organization tracking requirements',
 		expect(conflictRead?.input).toMatchObject({ includeSlotless: true });
 	});
 
+	it("reads a past break's overlaps in the employee's turn, after the start or stop queued before it", async () => {
+		organization = { allowBreaks: true };
+		let inTurn = false;
+		let readInTurn: boolean | undefined;
+		execute.mockImplementation(async (command: unknown) => {
+			if (command instanceof IGetConflictTimeLogCommand) {
+				readInTurn = inTurn;
+				return [];
+			}
+			return { id: 'log-new' };
+		});
+		type TurnRunner = { inEmployeeTurn: (employeeId: unknown, work: unknown) => Promise<unknown> };
+		const turnRunner = service as unknown as TurnRunner;
+		const realTurn = turnRunner.inEmployeeTurn.bind(service);
+		jest.spyOn(turnRunner, 'inEmployeeTurn').mockImplementation(async (employeeId, work) => {
+			inTurn = true;
+			return realTurn(employeeId, work);
+		});
+
+		await start({ logType: TimeLogType.BREAK, startedAt: anHourAgo() } as ITimerToggleInput);
+
+		expect(readInTurn).toBe(true);
+	});
+
 	it('refuses a break started in the past while a run goes on, which would keep the minutes it covers', async () => {
 		organization = { allowBreaks: true };
 		conflictsAre([]);

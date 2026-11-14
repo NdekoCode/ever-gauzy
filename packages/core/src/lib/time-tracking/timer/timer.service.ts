@@ -421,9 +421,6 @@ export class TimerService {
 		const startsBreak = logType === TimeLogType.BREAK;
 		if (startsBreak) {
 			assertBreaksAllowedIn(requirements);
-			if (startsInThePast) {
-				await this.assertBreakStartOverlapsNothing({ employeeId, organizationId, tenantId }, startedAt);
-			}
 		}
 
 		const teamIdToLog = await teamIdForEntry(manager, trackedEmployee, request, requirements);
@@ -460,6 +457,12 @@ export class TimerService {
 		// In this process, no other start or stop of the employee comes between closing the runs going and creating
 		// this one (inEmployeeTurn)
 		return await this.inEmployeeTurn(employeeId, async (turn) => {
+			// A break set in the past is refused when it overlaps an entry, before this start stops or writes anything
+			const checksPastBreak = startsBreak && startsInThePast;
+			if (checksPastBreak) {
+				await this.assertBreakStartOverlapsNothing({ employeeId, organizationId, tenantId }, startedAt);
+			}
+
 			// Stop any previous running timers: one from another client ends at its last heartbeat, or where this one
 			// starts when it never had one
 			await this.stopPreviousRunningTimers(employeeId, organizationId, tenantId, startedAt, undefined, turn);
