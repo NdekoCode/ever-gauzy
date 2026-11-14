@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional, OmitType } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
 	ArrayMaxSize,
@@ -13,17 +13,25 @@ import {
 	Min
 } from 'class-validator';
 import { ID, ITimeLogHistoryFindInput, TimeLogChangeKindEnum } from '@gauzy/contracts';
-import { TenantOrganizationBaseDTO } from '../../../../core/dto';
-import { IsBeforeDate } from '../../../../shared/validators';
+import { TenantBaseDTO } from '../../../../core/dto';
+import { IsBeforeDate, IsOrganizationBelongsToUser } from '../../../../shared/validators';
 
 /** The largest page of `GET /timesheet/time-log/history`. */
 export const TIME_LOG_HISTORY_MAX_TAKE = 500;
 
+/**
+ * The organization a history read is made in. The reads bind `organizationId` alone, so it is always required and
+ * one of the caller's; the `organization` object other queries accept in its place is not.
+ */
+export class TimeLogHistoryOrganizationQueryDTO extends TenantBaseDTO {
+	@ApiProperty({ type: () => String })
+	@IsUUID()
+	@IsOrganizationBelongsToUser()
+	readonly organizationId: ID;
+}
+
 /** The changes of a period, as `GET /timesheet/time-log/history` reads them. */
-export class TimeLogHistoryQueryDTO
-	extends OmitType(TenantOrganizationBaseDTO, ['sentTo'])
-	implements ITimeLogHistoryFindInput
-{
+export class TimeLogHistoryQueryDTO extends TimeLogHistoryOrganizationQueryDTO implements ITimeLogHistoryFindInput {
 	@ApiProperty({ type: () => Date })
 	@IsNotEmpty()
 	@IsDateString()
