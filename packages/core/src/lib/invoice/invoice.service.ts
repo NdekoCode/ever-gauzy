@@ -17,7 +17,7 @@ import {
 import { isPlainObject } from '@gauzy/utils';
 import { addDecimalStrings, normalizeDecimalString } from '../money/decimal';
 import { signPurposeToken, TokenPurposeEnum } from '../auth/purpose-token';
-import { MultiORMEnum } from './../core/utils';
+import { MultiORMEnum, parseFindOptionsRelations } from './../core/utils';
 import { RequestContext } from './../core/context';
 import { I18nService } from 'nestjs-i18n';
 import * as moment from 'moment';
@@ -74,6 +74,20 @@ export interface IInvoiceStatistics {
 	totals: IInvoiceCurrencyTotal[];
 	byStatus: IInvoiceStatusTotal[];
 }
+
+/** What an invoice is read with to be rendered as a PDF (`InvoiceService.renderInvoicePdf`). */
+export const INVOICE_PDF_RELATIONS: ReadonlyArray<string> = [
+	'fromOrganization',
+	'invoiceItems.employee.user',
+	'invoiceItems.employee',
+	'invoiceItems.expense',
+	'invoiceItems.product',
+	'invoiceItems.product.translations',
+	'invoiceItems.project',
+	'invoiceItems.task',
+	'invoiceItems',
+	'toContact'
+];
 
 @FavoriteService(BaseEntityEnum.Invoice)
 @Injectable()
@@ -440,19 +454,27 @@ export class InvoiceService extends TenantAwareCrudService<Invoice> {
 
 	async generateInvoicePdf(invoiceId: string, language: string) {
 		const invoice: IInvoice = await this.findOneByIdString(invoiceId, {
-			relations: [
-				'fromOrganization',
-				'invoiceItems.employee.user',
-				'invoiceItems.employee',
-				'invoiceItems.expense',
-				'invoiceItems.product',
-				'invoiceItems.product.translations',
-				'invoiceItems.project',
-				'invoiceItems.task',
-				'invoiceItems',
-				'toContact'
-			]
+			relations: [...INVOICE_PDF_RELATIONS]
 		});
+		return await this.renderInvoicePdf(invoice, language);
+	}
+
+	/**
+	 * Renders an invoice of `tenantId` as a PDF, in `language`, as `generateInvoicePdf` does, but reading the invoice by
+	 * its id and its tenant rather than through the request: for a caller outside one (the payment reminder sweep).
+	 *
+	 * @returns The PDF, or null when the tenant has no such invoice.
+	 */
+	async generateTenantInvoicePdf(invoiceId: ID, tenantId: ID, language: string): Promise<Buffer | null> {
+		const invoice = await this.typeOrmInvoiceRepository.findOne({
+			where: { id: invoiceId, tenantId },
+			relations: parseFindOptionsRelations<Invoice>([...INVOICE_PDF_RELATIONS])
+		});
+		return invoice ? await this.renderInvoicePdf(invoice, language) : null;
+	}
+
+	/** Renders an invoice read with {@link INVOICE_PDF_RELATIONS} as a PDF, in `language`. Reads nothing from the request. */
+	private async renderInvoicePdf(invoice: IInvoice, language: string): Promise<Buffer> {
 		const translatedText = {
 			item: await this.i18n.translate('USER_ORGANIZATION.INVOICES_PAGE.INVOICE_ITEM.ITEM', { lang: language }),
 			description: await this.i18n.translate('USER_ORGANIZATION.INVOICES_PAGE.INVOICE_ITEM.DESCRIPTION', {
