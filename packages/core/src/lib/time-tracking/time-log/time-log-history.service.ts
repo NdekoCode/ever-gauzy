@@ -101,7 +101,7 @@ export class TimeLogHistoryService {
 			builder.andWhere(new Brackets((kinds) => this.whereKinds(kinds, query.kinds)));
 		}
 		builder
-			.orderBy(p(`"history"."createdAt"`), 'DESC')
+			.orderBy('history.createdAt', 'DESC')
 			.skip(take * (page - 1))
 			.take(take);
 
