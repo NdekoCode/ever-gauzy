@@ -44,7 +44,12 @@ describe('TimeLogDeleteHandler: history of a deletion', () => {
 			transaction: jest.fn(async (work: (manager: unknown) => unknown) => work(transactionManager))
 		};
 		const commandBus = { execute: jest.fn(async () => undefined) };
-		const handler = new TimeLogDeleteHandler(repository as never, {} as never, commandBus as never, dataSource as never);
+		const handler = new TimeLogDeleteHandler(
+			repository as never,
+			{} as never,
+			commandBus as never,
+			dataSource as never
+		);
 		const record = recordTimeLogHistory as jest.Mock;
 		record.mockClear();
 		return { handler, repository, dataSource, transactionManager, transactionRepository, record };
