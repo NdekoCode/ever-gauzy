@@ -182,7 +182,8 @@ export class UserSessionService {
 	 * sees what the rotation minted; a rotation that comes after finds its token revoked and fails.
 	 *
 	 * @param signedOut The sessions whose marker this sign-out already wrote; the ones it writes are added.
-	 * @throws ConflictException when tokens are still being minted after {@link SIGN_OUT_PASSES} passes.
+	 * @throws ConflictException when tokens are still being minted, or a revocation is still not revised, after
+	 * {@link SIGN_OUT_PASSES} passes.
 	 */
 	private async signOutTokens(
 		userId: ID,
@@ -203,8 +204,10 @@ export class UserSessionService {
 			const tokens = await this.activeTokensOf(userId);
 			const targets = [...tokens.refreshTokens, ...tokens.accessTokens].filter(isPicked);
 			if (targets.length === 0) {
-				await this.reviseRevokedAccessTokens(userId, isPicked);
-				return;
+				const isRevised = await this.reviseRevokedAccessTokens(userId, isPicked);
+				if (isRevised) {
+					return;
+				}
 			}
 			await this.markSignedOut(userId, targets.map(sessionIdOf), signedOut);
 			await this.revoke(userId, targets);
@@ -252,8 +255,11 @@ export class UserSessionService {
 	 * Gives the access tokens of signed-out sessions that were already revoked for another reason (a logout, which leaves
 	 * its token usable until it expires) the sign-out's reason, so that `JwtStrategy` refuses them too. Only tokens that
 	 * can still be valid are read: those created within the access token lifetime.
+	 *
+	 * @returns Whether every such token now carries the sign-out's reason. A revision that did not apply (its token
+	 * kept being written meanwhile) is left to the next read.
 	 */
-	private async reviseRevokedAccessTokens(userId: ID, isPicked: (token: IToken) => boolean): Promise<void> {
+	private async reviseRevokedAccessTokens(userId: ID, isPicked: (token: IToken) => boolean): Promise<boolean> {
 		const revoked = await this.accessTokenService.findRevokedSince(
 			userId,
 			new Date(Date.now() - accessTokenLifetimeMs())
@@ -261,7 +267,7 @@ export class UserSessionService {
 		const toRevise = revoked.filter(
 			(token) => token.revokedReason !== USER_SESSION_SIGNED_OUT_REASON && isPicked(token)
 		);
-		await Promise.all(
+		const revised = await Promise.all(
 			toRevise.map((token) =>
 				this.accessTokenService.revokeById({
 					tokenId: token.id,
@@ -272,6 +278,7 @@ export class UserSessionService {
 				})
 			)
 		);
+		return revised.every(Boolean);
 	}
 
 	/** The session the request is made from, null when its token names none. */

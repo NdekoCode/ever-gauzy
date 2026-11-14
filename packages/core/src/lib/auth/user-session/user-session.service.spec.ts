@@ -327,6 +327,48 @@ describe('UserSessionService, an access token logged out before its session is s
 			.filter((revocation: any) => revocation.reviseRevoked);
 		expect(revised.map((revocation: any) => revocation.tokenId)).toEqual(['a-laptop-old']);
 	});
+
+	const loggedOutLaptopToken = () => ({
+		...token('a-laptop-old', 'ACCESS_TOKEN_TYPE', inSession('laptop')),
+		status: TokenStatus.REVOKED,
+		revokedReason: 'User initiated logout'
+	});
+	const revisionsOf = (revokeById: jest.Mock) =>
+		revokeById.mock.calls.filter(([revocation]: any[]) => revocation.reviseRevoked).length;
+
+	it('reads again and retries a revision that did not apply', async () => {
+		const { service, services } = build({ revokedAccess: [loggedOutLaptopToken()] });
+		const revoke = services.accessTokenService.revokeById.getMockImplementation();
+		let revisions = 0;
+		services.accessTokenService.revokeById.mockImplementation(async (revocation: any) => {
+			if (!revocation.reviseRevoked) {
+				return revoke(revocation);
+			}
+			revisions++;
+			return revisions > 1;
+		});
+		requestFrom('web');
+
+		await expect(service.signOutOthers({ password: 'right' })).resolves.toEqual({ signedOut: 1 });
+
+		expect(revisionsOf(services.accessTokenService.revokeById)).toBe(2);
+	});
+
+	it('answers a conflict when a revision never applies', async () => {
+		const { service, services } = build({ revokedAccess: [loggedOutLaptopToken()] });
+		const revoke = services.accessTokenService.revokeById.getMockImplementation();
+		services.accessTokenService.revokeById.mockImplementation(async (revocation: any) => {
+			if (!revocation.reviseRevoked) {
+				return revoke(revocation);
+			}
+			return false;
+		});
+		requestFrom('web');
+
+		await expect(service.signOutOthers({ password: 'right' })).rejects.toMatchObject({
+			response: { code: UserSessionRefusal.SIGN_OUT_INCOMPLETE }
+		});
+	});
 });
 
 describe('UserSessionService.signOut', () => {
