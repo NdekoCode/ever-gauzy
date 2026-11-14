@@ -100,7 +100,13 @@ import {
 	projectIdForEntry,
 	teamIdForEntry
 } from './organization-tracking-requirements';
-import { assertBreakOverlapsNothing, assertBreaksAllowedIn, assertBreakTypeKept, isBreak } from './break-rules';
+import {
+	assertBreakOverlapsNothing,
+	assertBreaksAllowedIn,
+	assertBreakTypeKept,
+	assertWorkOverlapsNoBreak,
+	isBreak
+} from './break-rules';
 
 /** The code of the refusal of manual time over a timer that is still running (409). */
 export const RUNNING_TIMER_OVERLAP = 'RUNNING_TIMER_OVERLAP';
@@ -2288,9 +2294,12 @@ export class TimeLogService extends TenantAwareCrudService<TimeLog> {
 				)
 			);
 
-			// A break never cuts the entries it would overlap: it is refused instead
+			// A break never cuts the entries it would overlap: it is refused instead. Work over a recorded break is
+			// refused too, so the break stays as recorded (a tracker's own upload is left to the tracker's rules)
 			if (addsBreak) {
 				assertBreakOverlapsNothing(conflicts);
+			} else if (!isTrackerUpload) {
+				assertWorkOverlapsNoBreak(conflicts);
 			}
 
 			// Resolve conflicts by deleting conflicting time slots
@@ -2418,10 +2427,12 @@ export class TimeLogService extends TenantAwareCrudService<TimeLog> {
 				await this.findRunningTimersStartedBefore(stoppedAt, employeeId, timeLog.organizationId, tenantId, id)
 			);
 
-			// A break never cuts the entries it would overlap
+			// A break never cuts the entries it would overlap, and work never moves over a recorded break
 			if (editsBreak) {
 				assertBreakOverlapsNothing(conflicts);
 				request.isBillable = false;
+			} else {
+				assertWorkOverlapsNoBreak(conflicts);
 			}
 
 			// Resolve conflicts by deleting conflicting time slots

@@ -1190,6 +1190,30 @@ describe('TimeLogService', () => {
 				const [update] = commandsOfType(TimeLogUpdateCommand);
 				expect(update.input).toMatchObject({ isBillable: false });
 			});
+
+			it('refuses work added over a recorded break, so the break is never cut or contradicted', async () => {
+				const recordedBreak = { ...workLog, id: 'break-1', logType: TimeLogType.BREAK, timeSlots: [] };
+				conflicts = [recordedBreak];
+
+				const refusal = await manualService.addManualTime({ ...request }).catch((thrown) => thrown);
+
+				expect(refusal).toBeInstanceOf(ConflictException);
+				expect((refusal as ConflictException).getResponse()).toMatchObject({ code: BREAK_OVERLAP });
+				expect(commandsOfType(DeleteTimeSpanCommand)).toEqual([]);
+				expect(commandsOfType(TimeLogCreateCommand)).toEqual([]);
+			});
+
+			it('refuses an edit that moves work over a recorded break', async () => {
+				storedLog.logType = TimeLogType.MANUAL;
+				conflicts = [{ ...workLog, id: 'break-1', logType: TimeLogType.BREAK, timeSlots: [] }];
+
+				const refusal = await manualService
+					.updateManualTime('log-1', { ...request, logType: TimeLogType.MANUAL })
+					.catch((thrown) => thrown);
+
+				expect((refusal as ConflictException).getResponse()).toMatchObject({ code: BREAK_OVERLAP });
+				expect(commandsOfType(TimeLogUpdateCommand)).toEqual([]);
+			});
 		});
 
 		/**

@@ -56,6 +56,23 @@ export function assertBreakOverlapsNothing(conflicts: ITimeLog[] | null | undefi
 }
 
 /**
+ * Refuses work added or moved over a recorded break: the break is kept as recorded, never contradicted by an entry
+ * the same person says they worked during it.
+ *
+ * @param conflicts The entries the new range overlaps.
+ * @throws ConflictException with the code BREAK_OVERLAP when one of them is a break.
+ */
+export function assertWorkOverlapsNoBreak(conflicts: ITimeLog[] | null | undefined): void {
+	const overlapsABreak = (conflicts ?? []).some((conflict) => isBreak(conflict));
+	if (overlapsABreak) {
+		throw new ConflictException({
+			message: 'This entry overlaps a break. Choose a time outside it.',
+			code: BREAK_OVERLAP
+		});
+	}
+}
+
+/**
  * Refuses an edit that changes whether an entry is a break: a break holds no time slots, and work keeps the slots it
  * tracked, so neither can become the other. An edit that does not name the type keeps it.
  *
