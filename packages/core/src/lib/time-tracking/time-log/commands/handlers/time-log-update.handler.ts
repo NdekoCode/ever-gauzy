@@ -1,6 +1,7 @@
 import { Logger, NotFoundException } from '@nestjs/common';
 import { ICommandHandler, CommandBus, CommandHandler } from '@nestjs/cqrs';
 import * as moment from 'moment';
+import { Repository } from 'typeorm';
 import { ID, ITimeLog, ITimeSlot, ITimesheet, TimeLogSourceEnum } from '@gauzy/contracts';
 import { isEmpty } from '@gauzy/utils';
 import { TimesheetFirstOrCreateCommand, TimesheetRecalculateCommand } from './../../../timesheet/commands';
@@ -16,6 +17,8 @@ import { assertTimeLogReferencesOfTenant } from '../../time-log-references';
 import { postsHeartbeatSlots } from '../../tracker-source';
 import { TimeSlot } from '../../../time-slot/time-slot.entity';
 import { TimeLogUpdateCommand } from '../time-log-update.command';
+import { updatedChange } from '../../time-log-history';
+import { historySubject, recordTimeLogHistory, TimeLogHistoryOptions } from '../../time-log-history.writer';
 import { TypeOrmTimeLogRepository } from '../../repository/type-orm-time-log.repository';
 import { TypeOrmTimeSlotRepository } from '../../../time-slot/repository/type-orm-time-slot.repository';
 import { MikroOrmTimeSlotRepository } from '../../../time-slot/repository/mikro-orm-time-slot.repository';
@@ -63,9 +66,12 @@ export class TimeLogUpdateHandler implements ICommandHandler<TimeLogUpdateComman
 
 	public async execute(command: TimeLogUpdateCommand): Promise<ITimeLog> {
 		// Extract input parameters from the command
-		const { id, input, manualTimeSlot, forceDelete = false } = command;
+		const { id, input, manualTimeSlot, forceDelete = false, history } = command;
 
 		let timeLog: ITimeLog = await this.getTimeLogByIdOrInstance(id);
+
+		// The entry as stored, for its history: the move below writes the changes onto `timeLog` itself.
+		const stored: ITimeLog = { ...timeLog };
 
 		// Tenant and organization always come from the stored row, never from the input: the input is
 		// (partly) a request body, and spreading its tenantId/organizationId into the update re-pointed
@@ -136,7 +142,7 @@ export class TimeLogUpdateHandler implements ICommandHandler<TimeLogUpdateComman
 			// nothing of the previous employee has been touched (at most the new employee keeps blank slots no log
 			// holds), and the error propagates;
 			Object.assign(timeLog, changes, timesheet ? { timesheetId: timesheet.id } : {}, { timeSlots: destination });
-			await this.saveUpdatedTimeLog(timeLog);
+			await this.writeWithHistory(stored, changes, history, (repository) => this.saveUpdatedTimeLog(timeLog, repository));
 			timeLog = await this.typeOrmTimeLogRepository.findOneBy({ id: timeLog.id });
 			// (c) only then the previous employee's slots are released, below. If that fails, the log is fully
 			// moved, the previous employee may keep slots that no longer belong to it, and the error propagates.
@@ -151,12 +157,15 @@ export class TimeLogUpdateHandler implements ICommandHandler<TimeLogUpdateComman
 				(await this.takesSlotsOfItsRange({ ...timeLog, ...changes }));
 
 			// Update the time log in the repository
-			await this.typeOrmTimeLogRepository.update(
-				{ id: timeLog.id, tenantId },
-				{
-					...changes,
-					...(timesheet ? { timesheetId: timesheet.id } : {})
-				}
+			const logId = timeLog.id;
+			await this.writeWithHistory(stored, changes, history, (repository) =>
+				repository.update(
+					{ id: logId, tenantId },
+					{
+						...changes,
+						...(timesheet ? { timesheetId: timesheet.id } : {})
+					}
+				)
 			);
 
 			// Retrieve the updated time log
@@ -499,14 +508,47 @@ export class TimeLogUpdateHandler implements ICommandHandler<TimeLogUpdateComman
 	}
 
 	/**
+	 * Runs the write of an edit. Edited by a person (`history` given), the write and the entry's history row run in
+	 * one transaction, or neither does. Otherwise the write runs alone, as before.
+	 *
+	 * @param stored - The entry as stored before the edit.
+	 * @param changes - The edit.
+	 * @param history - Given by the routes through which a person edits an entry.
+	 * @param write - The write, through the repository it is handed.
+	 */
+	private async writeWithHistory<T>(
+		stored: ITimeLog,
+		changes: Partial<ITimeLog>,
+		history: TimeLogHistoryOptions | undefined,
+		write: (repository: Repository<TimeLog>) => Promise<T>
+	): Promise<T> {
+		if (!history) {
+			return write(this.typeOrmTimeLogRepository);
+		}
+		return this.typeOrmTimeLogRepository.manager.transaction(async (manager) => {
+			const result = await write(manager.getRepository(TimeLog));
+			const edited = { ...stored, ...changes } as ITimeLog;
+			const change = updatedChange(stored, edited);
+			if (change) {
+				await recordTimeLogHistory(manager, [{ subject: historySubject(edited), change, reason: history.reason }]);
+			}
+			return result;
+		});
+	}
+
+	/**
 	 * Saves the updated time log to the repository.
 	 *
 	 * @param timeLog - The time log to be saved.
+	 * @param repository - The repository to save through: a transaction's, when the save is recorded in the history.
 	 * @returns A promise that resolves to the saved `ITimeLog` or throws an error if saving fails.
 	 */
-	private async saveUpdatedTimeLog(timeLog: ITimeLog): Promise<ITimeLog> {
+	private async saveUpdatedTimeLog(
+		timeLog: ITimeLog,
+		repository: Repository<TimeLog> = this.typeOrmTimeLogRepository
+	): Promise<ITimeLog> {
 		try {
-			return await this.typeOrmTimeLogRepository.save(timeLog);
+			return await repository.save(timeLog);
 		} catch (error) {
 			// Logged as before, and re-thrown: a swallowed failure answered the row as if it had been saved, while
 			// the writes around it (a move's employee and slots) went ahead.
