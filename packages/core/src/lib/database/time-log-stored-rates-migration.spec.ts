@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { DataSource, QueryRunner } from 'typeorm';
-import { AddTimeLogStoredRates1791000009400 } from './migrations/1791000009400-AddTimeLogStoredRates';
+import { AddTimeLogStoredRates1791000011400 } from './migrations/1791000011400-AddTimeLogStoredRates';
 
 const RATE_COLUMNS = [
 	'billRateValue',
@@ -88,7 +88,7 @@ describe('time log stored rates migration on SQLite', () => {
 	const run = async (direction: 'up' | 'down') => {
 		const queryRunner = dataSource.createQueryRunner();
 		try {
-			await new AddTimeLogStoredRates1791000009400()[direction](queryRunner);
+			await new AddTimeLogStoredRates1791000011400()[direction](queryRunner);
 		} finally {
 			await queryRunner.release();
 		}
@@ -228,7 +228,7 @@ function recordingRunner(type: 'mysql' | 'postgres', existingColumns: string[], 
 describe('time log stored rates migration on MySQL', () => {
 	it('adds the columns and fills them under a named lock MySQL accepts', async () => {
 		const { queries, queryRunner } = recordingRunner('mysql', []);
-		const migration = new AddTimeLogStoredRates1791000009400();
+		const migration = new AddTimeLogStoredRates1791000011400();
 
 		await migration.up(queryRunner);
 
@@ -257,7 +257,7 @@ describe('time log stored rates migration on MySQL', () => {
 	it('adds no column twice, and still fills the logs that store no rate yet', async () => {
 		const { queries, queryRunner } = recordingRunner('mysql', RATE_COLUMNS);
 
-		await new AddTimeLogStoredRates1791000009400().up(queryRunner);
+		await new AddTimeLogStoredRates1791000011400().up(queryRunner);
 
 		expect(queries.some((sql) => sql.startsWith('ALTER TABLE'))).toBe(false);
 		const fills = queries.filter((sql) => sql.startsWith('UPDATE'));
@@ -270,7 +270,7 @@ describe('time log stored rates migration on MySQL', () => {
 	it('drops every column on down', async () => {
 		const { queries, queryRunner } = recordingRunner('mysql', RATE_COLUMNS);
 
-		await new AddTimeLogStoredRates1791000009400().down(queryRunner);
+		await new AddTimeLogStoredRates1791000011400().down(queryRunner);
 
 		expect(queries).toEqual(RATE_COLUMNS.map((column) => `ALTER TABLE \`time_log\` DROP COLUMN \`${column}\``));
 	});
@@ -280,7 +280,7 @@ describe('time log stored rates migration on PostgreSQL', () => {
 	it('runs under the advisory lock and fills the rates through joins', async () => {
 		const { queries, queryRunner } = recordingRunner('postgres', [], true);
 
-		await new AddTimeLogStoredRates1791000009400().up(queryRunner);
+		await new AddTimeLogStoredRates1791000011400().up(queryRunner);
 
 		expect(queries[0]).toBe('SELECT pg_advisory_xact_lock($1)');
 		expect(queries.filter((sql) => sql.startsWith('ALTER TABLE'))).toHaveLength(RATE_COLUMNS.length);
@@ -293,7 +293,7 @@ describe('time log stored rates migration on PostgreSQL', () => {
 	it('drops every column on down', async () => {
 		const { queries, queryRunner } = recordingRunner('postgres', RATE_COLUMNS);
 
-		await new AddTimeLogStoredRates1791000009400().down(queryRunner);
+		await new AddTimeLogStoredRates1791000011400().down(queryRunner);
 
 		expect(queries).toEqual(
 			RATE_COLUMNS.map((column) => `ALTER TABLE "time_log" DROP COLUMN IF EXISTS "${column}"`)
