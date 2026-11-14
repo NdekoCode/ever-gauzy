@@ -186,7 +186,7 @@ export async function recordTimeLogHistory(
 			data: { employeeId: subject.employeeId, reason: reason ?? null },
 			employeeId: authorEmployeeId,
 			organizationId: subject.organizationId,
-			tenantId: subject.tenantId
+			tenantId: subject.tenantId ?? tenantId
 		})
 	);
 	await manager.save(ActivityLog, rows);

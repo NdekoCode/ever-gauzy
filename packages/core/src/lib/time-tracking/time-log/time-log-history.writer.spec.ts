@@ -84,6 +84,16 @@ describe('recordTimeLogHistory', () => {
 		expect(taskRead).toMatchObject({ withDeleted: true, where: { tenantId: 'tenant-1' } });
 	});
 
+	it('keeps the request tenant on a row whose entry arrives without one', async () => {
+		const { manager, saved } = fakeManager();
+		jest.spyOn(RequestContext, 'currentTenantId').mockReturnValue('tenant-1');
+		const change = updatedChange({ taskId: 'task-login' }, { taskId: 'task-signup' });
+
+		await recordTimeLogHistory(manager as never, [{ subject: { ...SUBJECT, tenantId: undefined }, change }]);
+
+		expect(saved[0].tenantId).toBe('tenant-1');
+	});
+
 	it('writes nothing, and reads nothing, for no change', async () => {
 		const { manager } = fakeManager();
 
