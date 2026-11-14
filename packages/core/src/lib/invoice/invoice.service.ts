@@ -378,6 +378,9 @@ export class InvoiceService extends TenantAwareCrudService<Invoice> {
 					organization
 				);
 
+				if (!isEstimate) {
+					await this.recordInvoiceDelivery(estimateEmail.id, invoiceId, invoiceNumber, languageCode);
+				}
 				return { sent: true };
 			} catch (error) {
 				console.log(`Error while sending estimate email ${invoiceNumber}: %s`, error?.message);
@@ -388,6 +391,27 @@ export class InvoiceService extends TenantAwareCrudService<Invoice> {
 			console.log(`Error while creating estimate email for invoice ${invoiceId}: %s`, error?.message);
 
 			return { sent: false, reason: 'EMAIL_NOT_PREPARED' };
+		}
+	}
+
+	/**
+	 * Records which invoice an email delivered, and in which language, once the mail transport took it: the invoice's
+	 * payment reminders go to the same address, in the same language. The invoice went whatever this write does, so a
+	 * failure is logged and the send still reports `sent`; that invoice then gets no reminder.
+	 */
+	private async recordInvoiceDelivery(
+		estimateEmailId: ID,
+		invoiceId: ID,
+		invoiceNumber: number,
+		languageCode: LanguagesEnum
+	): Promise<void> {
+		try {
+			await this.estimateEmailService.recordInvoiceDelivery(estimateEmailId, invoiceId, languageCode);
+		} catch (error) {
+			console.log(
+				`Invoice ${invoiceNumber} was emailed, but where it went was not recorded, so it gets no payment reminder: %s`,
+				error?.message
+			);
 		}
 	}
 
