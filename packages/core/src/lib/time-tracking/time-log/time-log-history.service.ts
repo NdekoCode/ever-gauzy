@@ -37,23 +37,25 @@ export class TimeLogHistoryService {
 	) {}
 
 	/**
-	 * The history of one entry, newest first. The entry may be deleted: a soft-deleted one is still found, and a
-	 * hard-deleted one is known by the owner its rows keep.
+	 * The history of one entry of an organization, newest first. The entry may be deleted: a soft-deleted one is still
+	 * found, and a hard-deleted one is known by the owner its rows keep. An entry of another organization is not found,
+	 * whatever the caller may read there.
 	 *
 	 * @param id The entry.
-	 * @throws NotFoundException When the tenant has no such entry and no history for it.
+	 * @param organizationId The organization the read is made in, one of the caller's (the route checks it).
+	 * @throws NotFoundException When the organization has no such entry and no history for it.
 	 * @throws ForbiddenException When the caller may not read the owner's time.
 	 */
-	async findEntryHistory(id: ID): Promise<IActivityLog[]> {
+	async findEntryHistory(id: ID, organizationId: ID): Promise<IActivityLog[]> {
 		const tenantId = RequestContext.currentTenantId();
 		const manager = this.typeOrmTimeLogRepository.manager;
 		const entry = await manager.findOne(TimeLog, {
-			where: { id, tenantId },
+			where: { id, tenantId, organizationId },
 			select: { id: true, employeeId: true },
 			withDeleted: true
 		});
 		const rows = await manager.find(ActivityLog, {
-			where: { entity: BaseEntityEnum.TimeLog, entityId: id, tenantId },
+			where: { entity: BaseEntityEnum.TimeLog, entityId: id, tenantId, organizationId },
 			order: { createdAt: 'DESC' }
 		});
 		const ownerKeptInRows = (rows[0]?.data as { employeeId?: ID } | undefined)?.employeeId;

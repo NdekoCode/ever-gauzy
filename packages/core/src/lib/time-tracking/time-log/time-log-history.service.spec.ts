@@ -4,6 +4,7 @@ import '../../core/entities/internal';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PermissionsEnum } from '@gauzy/contracts';
 import { RequestContext } from '../../core/context';
+import { TimeLogController } from './time-log.controller';
 import { TimeLogHistoryService } from './time-log-history.service';
 
 /**
@@ -11,10 +12,22 @@ import { TimeLogHistoryService } from './time-log-history.service';
  * entries' history, people who manage a member or may see everyone's time read theirs, nobody else.
  */
 describe('TimeLogHistoryService scoping', () => {
-	function setup(options: { entry?: { employeeId: string } | null; rows?: unknown[]; manages?: boolean } = {}) {
+	type Stored = { organizationId?: string } & Record<string, unknown>;
+	type Read = { where?: { organizationId?: string } };
+
+	/** What a database answers to a read: the records of the organization it names (`org-1` unless stated), if any. */
+	const ofOrganization = (record: Stored, read?: Read) =>
+		read?.where?.organizationId === undefined || (record.organizationId ?? 'org-1') === read.where.organizationId;
+
+	function setup(options: { entry?: Stored | null; rows?: Stored[]; manages?: boolean } = {}) {
 		const manager = {
-			findOne: jest.fn<Promise<unknown>, [unknown, unknown?]>(async () => options.entry ?? null),
-			find: jest.fn<Promise<unknown[]>, [unknown, unknown?]>(async () => options.rows ?? []),
+			findOne: jest.fn<Promise<unknown>, [unknown, Read?]>(async (_entity, read) => {
+				const entry = options.entry ?? null;
+				return entry && ofOrganization(entry, read) ? entry : null;
+			}),
+			find: jest.fn<Promise<unknown[]>, [unknown, Read?]>(async (_entity, read) =>
+				(options.rows ?? []).filter((row) => ofOrganization(row, read))
+			),
 			createQueryBuilder: jest.fn()
 		};
 		const timeLogService = {
@@ -86,20 +99,23 @@ describe('TimeLogHistoryService scoping', () => {
 			const rows = [{ id: 'row-2' }, { id: 'row-1' }];
 			const { service, manager, timeLogService } = setup({ entry: { employeeId: 'employee-paul' }, rows });
 
-			expect(await service.findEntryHistory('log-1')).toBe(rows);
+			expect(await service.findEntryHistory('log-1', 'org-1')).toEqual(rows);
 			expect(timeLogService.assertCanReadEmployeeTimeLogs).toHaveBeenCalledWith('employee-paul');
 			expect(manager.find.mock.calls[0][1]).toMatchObject({
-				where: { entity: 'TimeLog', entityId: 'log-1', tenantId: 'tenant-1' },
+				where: { entity: 'TimeLog', entityId: 'log-1', tenantId: 'tenant-1', organizationId: 'org-1' },
 				order: { createdAt: 'DESC' }
 			});
-			expect(manager.findOne.mock.calls[0][1]).toMatchObject({ withDeleted: true });
+			expect(manager.findOne.mock.calls[0][1]).toMatchObject({
+				where: { id: 'log-1', tenantId: 'tenant-1', organizationId: 'org-1' },
+				withDeleted: true
+			});
 		});
 
 		it('refuses the history of another member to a caller who may not read their time', async () => {
 			signedInAs('employee-amina');
 			const { service } = setup({ entry: { employeeId: 'employee-marie' }, rows: [{ id: 'row-1' }] });
 
-			await expect(service.findEntryHistory('log-1')).rejects.toBeInstanceOf(ForbiddenException);
+			await expect(service.findEntryHistory('log-1', 'org-1')).rejects.toBeInstanceOf(ForbiddenException);
 		});
 
 		it('knows a hard-deleted entry by the owner its rows keep', async () => {
@@ -107,7 +123,7 @@ describe('TimeLogHistoryService scoping', () => {
 			const rows = [{ id: 'row-1', data: { employeeId: 'employee-paul' } }];
 			const { service, timeLogService } = setup({ entry: null, rows });
 
-			expect(await service.findEntryHistory('log-1')).toBe(rows);
+			expect(await service.findEntryHistory('log-1', 'org-1')).toEqual(rows);
 			expect(timeLogService.assertCanReadEmployeeTimeLogs).toHaveBeenCalledWith('employee-paul');
 		});
 
@@ -115,7 +131,24 @@ describe('TimeLogHistoryService scoping', () => {
 			signedInAs('employee-paul');
 			const { service } = setup({ entry: null, rows: [] });
 
-			await expect(service.findEntryHistory('log-1')).rejects.toBeInstanceOf(NotFoundException);
+			await expect(service.findEntryHistory('log-1', 'org-1')).rejects.toBeInstanceOf(NotFoundException);
+		});
+
+		it('answers 404 for an entry of another organization, to a caller who may read its owner', async () => {
+			signedInAs('employee-paul');
+			const rows = [{ id: 'row-1', organizationId: 'org-2', data: { employeeId: 'employee-paul' } }];
+			const { service } = setup({ entry: { employeeId: 'employee-paul', organizationId: 'org-2' }, rows });
+
+			await expect(service.findEntryHistory('log-1', 'org-1')).rejects.toBeInstanceOf(NotFoundException);
+		});
+
+		it('is read by the route in the organization its query names', async () => {
+			const history = { findEntryHistory: jest.fn(async () => []) };
+			const controller = new TimeLogController({} as never, {} as never, {} as never, history as never);
+
+			await controller.getEntryHistory('log-1', { organizationId: 'org-1' } as never);
+
+			expect(history.findEntryHistory).toHaveBeenCalledWith('log-1', 'org-1');
 		});
 	});
 

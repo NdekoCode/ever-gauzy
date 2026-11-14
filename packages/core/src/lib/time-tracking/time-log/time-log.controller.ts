@@ -41,6 +41,7 @@ import {
 	GetTimeLogConflictQueryDTO,
 	TimeLogBudgetQueryDTO,
 	TimeLogLimitQueryDTO,
+	TimeLogHistoryOrganizationQueryDTO,
 	TimeLogHistoryQueryDTO,
 	TimeLogListQueryDTO,
 	TimeLogQueryDTO
@@ -294,18 +295,23 @@ export class TimeLogController {
 	/**
 	 * The history of one time entry, newest first: each change with who made it, when, the values before and after,
 	 * and the reason given. Readable by the entry's owner, by people who manage them and by people who may see
-	 * everyone's time.
+	 * everyone's time, in the entry's organization only.
 	 *
 	 * @param id The time entry.
+	 * @param query The organization the entry is read in, one of the caller's.
 	 */
 	@ApiOperation({ summary: 'The history of one time entry, newest first' })
 	@ApiResponse({ status: HttpStatus.OK, description: 'The history rows of the entry' })
 	@ApiResponse({ status: HttpStatus.FORBIDDEN, description: "The caller may not read this member's time" })
-	@ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'The tenant has no such entry' })
+	@ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'The organization has no such entry' })
 	@UseGuards(EmployeeTrackedDataGuard)
 	@Get(':id/history')
-	async getEntryHistory(@Param('id', UUIDValidationPipe) id: ID): Promise<IActivityLog[]> {
-		return await this._timeLogHistoryService.findEntryHistory(id);
+	@UseValidationPipe({ whitelist: true, transform: true })
+	async getEntryHistory(
+		@Param('id', UUIDValidationPipe) id: ID,
+		@Query() query: TimeLogHistoryOrganizationQueryDTO
+	): Promise<IActivityLog[]> {
+		return await this._timeLogHistoryService.findEntryHistory(id, query.organizationId);
 	}
 
 	/**
@@ -341,7 +347,8 @@ export class TimeLogController {
 	@UseGuards(OrganizationPermissionGuard)
 	@Permissions(PermissionsEnum.ALLOW_MANUAL_TIME)
 	async addManualTime(
-		@Body(TimeLogBodyTransformPipe, new ValidationPipe({ transform: true, whitelist: true })) entity: CreateManualTimeLogDTO
+		@Body(TimeLogBodyTransformPipe, new ValidationPipe({ transform: true, whitelist: true }))
+		entity: CreateManualTimeLogDTO
 	): Promise<ITimeLog> {
 		return await this._timeLogService.addManualTime(entity);
 	}
@@ -449,7 +456,8 @@ export class TimeLogController {
 	@OrganizationPolicyTarget(TimeLog)
 	async updateManualTime(
 		@Param('id', UUIDValidationPipe) id: ID,
-		@Body(TimeLogBodyTransformPipe, new ValidationPipe({ transform: true, whitelist: true })) entity: UpdateManualTimeLogDTO
+		@Body(TimeLogBodyTransformPipe, new ValidationPipe({ transform: true, whitelist: true }))
+		entity: UpdateManualTimeLogDTO
 	): Promise<ITimeLog> {
 		return await this._timeLogService.updateManualTime(id, entity);
 	}
