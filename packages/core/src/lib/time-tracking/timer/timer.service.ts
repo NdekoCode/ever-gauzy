@@ -886,23 +886,23 @@ export class TimerService {
 			throw await this.moveRefusedMeanwhile(runningLog.id, tenantId);
 		}
 
-		// A running log's end is the last moment its run was known to go on: the start of a web timer run, the time of
-		// a heartbeat. A start moved past it takes now as its end, as a heartbeat would, so the log never ends before it
-		// starts and the slot holding the new start stays with the run.
-		const knownUntil = moment.utc(runningLog.stoppedAt ?? runningLog.startedAt);
-		const startsAfterKnownEnd = moment.utc(requestedStart).isAfter(knownUntil);
 		const reason = (request.reason ?? '').trim();
 		const changes: Partial<ITimeLog> = {
 			startedAt: requestedStart,
 			editedAt: now,
 			...(reason ? { reason } : {})
 		};
+		const write: Partial<ITimeLog> = { ...changes };
+		const endAfterMove = await this.endAfterStartMove(before, requestedStart, now);
+		if (endAfterMove) {
+			write.stoppedAt = endAfterMove;
+		}
 
 		// The move is written only while the run still runs from the start it was checked against: a stop that landed
 		// since keeps its end, another move's start is checked again, and nothing moves.
 		const written = await this.typeOrmTimeLogRepository.update(
 			{ id: runningLog.id, tenantId, isRunning: true, startedAt: before.startedAt },
-			{ ...changes, ...(startsAfterKnownEnd ? { stoppedAt: now } : {}) }
+			write
 		);
 		if (!written.affected) {
 			throw await this.moveRefusedMeanwhile(runningLog.id, tenantId);
@@ -1003,6 +1003,49 @@ export class TimerService {
 	}
 
 	/**
+	 * The end a run takes as its start moves, or undefined when it keeps its own: the end a start that replaces the run
+	 * reads as its last heartbeat (`replacedRunEnd`).
+	 *
+	 * A run that never had a heartbeat (its end on its start, no slot: a web timer's) keeps its end on its new start,
+	 * so a start that replaces it still ends it where that start begins. A run that had heartbeats keeps its last one,
+	 * or takes now as one when its new start passes it, so it never ends before it starts and the slot holding the new
+	 * start stays with it.
+	 *
+	 * @param run - The run as stored before the move.
+	 * @param requestedStart - The new start.
+	 * @param now - The moment of the move.
+	 */
+	private async endAfterStartMove(run: ITimeLog, requestedStart: Date, now: Date): Promise<Date | undefined> {
+		const knownUntil = moment.utc(run.stoppedAt ?? run.startedAt);
+		const held = await this.slotsHeldBy(run.id);
+		const endsAfterItsStart = knownUntil.isAfter(moment.utc(run.startedAt));
+		const holdsSlots = held.length > 0;
+		const hasHadHeartbeat = endsAfterItsStart || holdsSlots;
+		if (!hasHadHeartbeat) {
+			return requestedStart;
+		}
+
+		const startsAfterKnownEnd = moment.utc(requestedStart).isAfter(knownUntil);
+		if (startsAfterKnownEnd) {
+			return now;
+		}
+		return undefined;
+	}
+
+	/**
+	 * The time slots a time log holds, as stored.
+	 *
+	 * @param timeLogId - The time log.
+	 */
+	private async slotsHeldBy(timeLogId: ID): Promise<ITimeSlot[]> {
+		return await this.typeOrmTimeLogRepository.manager
+			.createQueryBuilder()
+			.relation(TimeLog, 'timeSlots')
+			.of(timeLogId)
+			.loadMany();
+	}
+
+	/**
 	 * Gives a run whose client posts its slots (a heartbeat-fed run) the slots of the time from its start to its first
 	 * slot, without activity, and gives that first slot the seconds the run covers in it, keeping its activity: an
 	 * earlier start's added minutes count in the slots, and so in the timesheet, as in the run's duration.
@@ -1017,11 +1060,7 @@ export class TimerService {
 	 */
 	private async coverRunFromItsStart(run: ITimeLog, now: Date): Promise<boolean> {
 		const { id: timeLogId } = run;
-		const held: ITimeSlot[] = await this.typeOrmTimeLogRepository.manager
-			.createQueryBuilder()
-			.relation(TimeLog, 'timeSlots')
-			.of(timeLogId)
-			.loadMany();
+		const held = await this.slotsHeldBy(timeLogId);
 		if (held.length === 0) {
 			return false;
 		}

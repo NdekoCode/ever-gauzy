@@ -2,6 +2,7 @@
 import '../../core/entities/internal';
 
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import * as moment from 'moment';
 import { ITimeLog, PermissionsEnum, TimeLogSourceEnum } from '@gauzy/contracts';
 import { RequestContext } from '../../core/context';
 import { MultiORMEnum } from '../../core/utils';
@@ -627,6 +628,35 @@ describe.each([MultiORMEnum.TypeORM, MultiORMEnum.MikroORM])(
 			const later = createService(ormType, [runningLog()], employeeIn(openOrganization));
 			const moved = await later.service.moveRunningTimerStart({ startedAt: at('09:40') });
 			expect(new Date(moved.startedAt).toISOString()).toBe('2026-11-16T09:40:00.000Z');
+		});
+
+		/** Her run from the web timer, which sends no heartbeat: started at 9:25, its end on its start, no slot. */
+		const webRun = (): TimeLogRow => runningLog({ source: TimeLogSourceEnum.WEB_TIMER, stoppedAt: RUNNING_SINCE });
+
+		/** Where a start at `nextStart` ends the run, reading it with its slots as `stopPreviousRunningTimers` does. */
+		const endWhenReplacedAt = (service: TimerService, row: TimeLogRow, nextStart: Date): Date =>
+			service['replacedRunEnd']({ ...row, timeSlots: [] } as unknown as ITimeLog, moment.utc(nextStart));
+
+		it('keeps the end of a web run moved earlier on its new start, so a start at 12:00 ends it at 12:00', async () => {
+			const rows = [webRun()];
+			const { service, linkedSlots } = createService(ormType, rows, employeeIn(openOrganization));
+
+			await service.moveRunningTimerStart({ startedAt: at('09:00') });
+
+			expect(rows[0]).toMatchObject({ isRunning: true, startedAt: at('09:00'), stoppedAt: at('09:00') });
+			expect(linkedSlots()).toEqual([]);
+			expect(endWhenReplacedAt(service, rows[0], at('12:00'))).toEqual(at('12:00'));
+		});
+
+		it('keeps the end of a web run moved later on its new start, so a start at 12:00 ends it at 12:00', async () => {
+			const rows = [webRun()];
+			const { service, linkedSlots } = createService(ormType, rows, employeeIn(openOrganization));
+
+			await service.moveRunningTimerStart({ startedAt: at('09:40') });
+
+			expect(rows[0]).toMatchObject({ isRunning: true, startedAt: at('09:40'), stoppedAt: at('09:40') });
+			expect(linkedSlots()).toEqual([]);
+			expect(endWhenReplacedAt(service, rows[0], at('12:00'))).toEqual(at('12:00'));
 		});
 	}
 );
