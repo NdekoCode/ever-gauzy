@@ -2,7 +2,7 @@
 import '../../core/entities/internal';
 
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
-import { ITimeLog, TimeLogSourceEnum } from '@gauzy/contracts';
+import { ITimeLog, PermissionsEnum, TimeLogSourceEnum } from '@gauzy/contracts';
 import { RequestContext } from '../../core/context';
 import { MultiORMEnum } from '../../core/utils';
 import { asTenantUser, createTenantFixture } from '../../core/testing/tenant-isolation/tenant-isolation.fixtures';
@@ -15,6 +15,7 @@ import {
 import {
 	TIMER_NOT_RUNNING,
 	TIMER_START_CHANGED,
+	TIMER_START_EDIT_NOT_ALLOWED,
 	TIMER_START_MANUAL_NOT_ALLOWED,
 	TIMER_START_OVERLAP,
 	TIMER_START_TRACKER_RUN
@@ -285,10 +286,13 @@ describe.each([MultiORMEnum.TypeORM, MultiORMEnum.MikroORM])(
 				stoppedAt: at('09:10')
 			});
 
+		/** Her role may change tracked time and add time by hand, as the manual time routes require. */
+		const timeEditingRole = [PermissionsEnum.ALLOW_MODIFY_TIME, PermissionsEnum.ALLOW_MANUAL_TIME];
+
 		let restore: () => void;
 
 		beforeEach(() => {
-			({ restore } = asTenantUser(fixture));
+			({ restore } = asTenantUser(fixture, { permissions: timeEditingRole }));
 			jest.spyOn(RequestContext, 'hasRoles').mockReturnValue(false);
 			jest.spyOn(Date, 'now').mockReturnValue(NOW.getTime());
 		});
@@ -585,6 +589,44 @@ describe.each([MultiORMEnum.TypeORM, MultiORMEnum.MikroORM])(
 			expect(answer).toMatchObject({ id: RUNNING_LOG_ID });
 			expect(commandsOf(TimeLogUpdateCommand)).toHaveLength(0);
 			expect(rows[0].editedAt).toBeUndefined();
+		});
+
+		it('refuses any move for a role that may not change tracked time, and writes nothing', async () => {
+			jest.spyOn(RequestContext, 'hasPermission').mockImplementation(
+				(permission) => permission === PermissionsEnum.ALLOW_MANUAL_TIME
+			);
+			const { service, execute, typeOrmTimeLogRepository } = createService(
+				ormType,
+				[runningLog()],
+				employeeIn(openOrganization)
+			);
+
+			const move = service.moveRunningTimerStart({ startedAt: at('09:40') });
+
+			await expect(move).rejects.toBeInstanceOf(ForbiddenException);
+			await move.catch((error: ForbiddenException) => {
+				expect(error.getResponse()).toMatchObject({ code: TIMER_START_EDIT_NOT_ALLOWED });
+			});
+			expect(typeOrmTimeLogRepository.update).not.toHaveBeenCalled();
+			expect(execute).not.toHaveBeenCalled();
+		});
+
+		it('refuses an earlier start for a role that may not add time by hand, and lets a later one through', async () => {
+			jest.spyOn(RequestContext, 'hasPermission').mockImplementation(
+				(permission) => permission === PermissionsEnum.ALLOW_MODIFY_TIME
+			);
+
+			const earlier = createService(ormType, [runningLog()], employeeIn(openOrganization));
+			const refused = earlier.service.moveRunningTimerStart({ startedAt: at('09:00') });
+			await expect(refused).rejects.toBeInstanceOf(ForbiddenException);
+			await refused.catch((error: ForbiddenException) => {
+				expect(error.getResponse()).toMatchObject({ code: TIMER_START_MANUAL_NOT_ALLOWED });
+			});
+			expect(earlier.execute).not.toHaveBeenCalled();
+
+			const later = createService(ormType, [runningLog()], employeeIn(openOrganization));
+			const moved = await later.service.moveRunningTimerStart({ startedAt: at('09:40') });
+			expect(new Date(moved.startedAt).toISOString()).toBe('2026-11-16T09:40:00.000Z');
 		});
 	}
 );

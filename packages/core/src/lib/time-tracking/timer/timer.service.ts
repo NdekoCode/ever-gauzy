@@ -827,12 +827,12 @@ export class TimerService {
 	 * Moves the start of the caller's running timer, earlier or later, while it keeps running: the entry stays one
 	 * entry. Marie clicked Start at 9:25 and began at 9:00; she sets 9:00 and her timer reads 25 more minutes.
 	 *
-	 * The move follows the rules of time changed by hand (`startMoveRefusal`): not later than now, the organization's
-	 * switch on changing tracked time for any move and on manual time for an earlier one, and its reason rule. A run of
-	 * the desktop app or the agent is refused, since they upload its slots themselves. An earlier start may not overlap
-	 * another entry of the caller, and the minutes it adds get their ten-minute slots, without activity. A later start
-	 * goes through the time log update, which releases the slots before it, with their screenshots and activity. The
-	 * log is marked edited, with the reason given.
+	 * The move follows the rules of time changed by hand (`startMoveRefusal`): not later than now, the role's permission
+	 * and the organization's switch to change tracked time for any move, and to add time by hand for an earlier one,
+	 * and the organization's reason rule. A run of the desktop app or the agent is refused, since they upload its slots
+	 * themselves. An earlier start may not overlap another entry of the caller, and the minutes it adds get their
+	 * ten-minute slots, without activity. A later start goes through the time log update, which releases the slots
+	 * before it, with their screenshots and activity. The log is marked edited, with the reason given.
 	 *
 	 * @param request - The new start, and the reason.
 	 * @returns The running log, the row the timer status answers as its `lastLog`.
@@ -854,7 +854,9 @@ export class TimerService {
 			now,
 			reason: request.reason,
 			organization: employee.organization,
-			bypassesTimePolicy: this.bypassesTimePolicy()
+			bypassesTimePolicy: this.bypassesTimePolicy(),
+			roleMayModifyTime: RequestContext.hasPermission(PermissionsEnum.ALLOW_MODIFY_TIME),
+			roleMayAddTime: RequestContext.hasPermission(PermissionsEnum.ALLOW_MANUAL_TIME)
 		});
 		if (refusal) {
 			throw startMoveException(refusal);

@@ -55,6 +55,10 @@ export interface StartMoveRequest {
 		Partial<Pick<IOrganization, 'allowManualTime' | 'allowModifyTime' | 'requireReason'>> | null | undefined;
 	/** A super admin, where the installation lets that role bypass the organization's time policy. */
 	bypassesTimePolicy: boolean;
+	/** Whether the caller's role may change tracked time (`ALLOW_MODIFY_TIME`). */
+	roleMayModifyTime: boolean;
+	/** Whether the caller's role may add time by hand (`ALLOW_MANUAL_TIME`). */
+	roleMayAddTime: boolean;
 }
 
 /**
@@ -71,11 +75,13 @@ export function movesStartEarlier(runningSince: Date, requestedStart: Date): boo
  * The refusal of a move of the running timer's start, or null when the move may go ahead. The overlap with another
  * entry is checked apart, since it needs the member's other entries.
  *
- * The time policy is the organization's, read as the organization policy guard of the manual time routes reads it:
- * a switch that is not on refuses, and a super admin passes where the installation lets that role bypass it. The
- * reason rule is a rule on the data and holds for everyone.
+ * The caller's role needs the permissions the manual time routes require, besides the organization's switches:
+ * `ALLOW_MODIFY_TIME` for any move, and `ALLOW_MANUAL_TIME` for an earlier start. The time policy is the
+ * organization's, read as the organization policy guard of the manual time routes reads it: a switch that is not on
+ * refuses, and a super admin passes where the installation lets that role bypass it. The reason rule is a rule on the
+ * data and holds for everyone.
  *
- * @param request - The move, with the running log and the organization's policy.
+ * @param request - The move, with the running log, the caller's role and the organization's policy.
  */
 export function startMoveRefusal(request: StartMoveRequest): StartMoveRefusal | null {
 	const { runningLog, requestedStart, now, organization, bypassesTimePolicy } = request;
@@ -106,6 +112,14 @@ export function startMoveRefusal(request: StartMoveRequest): StartMoveRefusal | 
 		};
 	}
 
+	if (!request.roleMayModifyTime) {
+		return {
+			status: HttpStatus.FORBIDDEN,
+			code: TIMER_START_EDIT_NOT_ALLOWED,
+			message: 'Your role does not allow changing tracked time.'
+		};
+	}
+
 	const policyApplies = !bypassesTimePolicy;
 	const mayChangeTrackedTime = organization?.allowModifyTime === true;
 	if (policyApplies && !mayChangeTrackedTime) {
@@ -117,6 +131,15 @@ export function startMoveRefusal(request: StartMoveRequest): StartMoveRefusal | 
 	}
 
 	const addsTimeByHand = movesStartEarlier(runningLog.startedAt, requestedStart);
+	const roleRefusesAddedTime = addsTimeByHand && !request.roleMayAddTime;
+	if (roleRefusesAddedTime) {
+		return {
+			status: HttpStatus.FORBIDDEN,
+			code: TIMER_START_MANUAL_NOT_ALLOWED,
+			message: 'Your role does not allow adding time by hand, so the start can only move later.'
+		};
+	}
+
 	const mayAddTimeByHand = organization?.allowManualTime === true;
 	const refusesAddedTime = policyApplies && addsTimeByHand && !mayAddTimeByHand;
 	if (refusesAddedTime) {

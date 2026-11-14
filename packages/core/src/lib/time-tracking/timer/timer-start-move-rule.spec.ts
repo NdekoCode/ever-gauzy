@@ -22,8 +22,12 @@ const LATER = new Date('2026-11-16T09:40:00.000Z');
 
 const openOrganization = { allowManualTime: true, allowModifyTime: true, requireReason: false };
 
+/** A role holding both permissions the manual time routes require. */
+const fullRole = { roleMayModifyTime: true, roleMayAddTime: true };
+
 function request(overrides: Partial<StartMoveRequest> = {}): StartMoveRequest {
 	return {
+		...fullRole,
 		runningLog: { startedAt: RUNNING_SINCE, source: TimeLogSourceEnum.TEAMS },
 		requestedStart: EARLIER,
 		now: NOW,
@@ -75,6 +79,21 @@ describe('startMoveRefusal', () => {
 
 		expect(startMoveRefusal(request({ organization, requestedStart: EARLIER }))).toMatchObject(refusal);
 		expect(startMoveRefusal(request({ organization, requestedStart: LATER }))).toMatchObject(refusal);
+	});
+
+	it('refuses with 403 any move when the role may not change tracked time (ALLOW_MODIFY_TIME)', () => {
+		const refusal = { status: HttpStatus.FORBIDDEN, code: TIMER_START_EDIT_NOT_ALLOWED };
+
+		expect(startMoveRefusal(request({ roleMayModifyTime: false, requestedStart: EARLIER }))).toMatchObject(refusal);
+		expect(startMoveRefusal(request({ roleMayModifyTime: false, requestedStart: LATER }))).toMatchObject(refusal);
+	});
+
+	it('refuses an earlier start when the role may not add time by hand (ALLOW_MANUAL_TIME), and lets a later one through', () => {
+		expect(startMoveRefusal(request({ roleMayAddTime: false, requestedStart: EARLIER }))).toMatchObject({
+			status: HttpStatus.FORBIDDEN,
+			code: TIMER_START_MANUAL_NOT_ALLOWED
+		});
+		expect(startMoveRefusal(request({ roleMayAddTime: false, requestedStart: LATER }))).toBeNull();
 	});
 
 	it('refuses an organization whose time policy is unset, as the organization policy guard does', () => {
