@@ -6794,6 +6794,7 @@
 			"email-reset": "Restablecimiento de correo electrónico.",
 			"organization-team-join-request": "Solicitud de unión al equipo de la organización",
 			"payment-receipt": "Recibo de pago",
+			"invoice-reminder": "Recordatorio de factura",
 			"reject-candidate": "Rechazar Candidato"
 		},
 		"HTML_EDITOR": "Editor HTML",

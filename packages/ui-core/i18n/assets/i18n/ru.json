@@ -6810,6 +6810,7 @@
 			"email-reset": "Сброс электронной почты",
 			"organization-team-join-request": "Запрос на вступление в команду организации",
 			"payment-receipt": "Квитанция об оплате",
+			"invoice-reminder": "Напоминание о счёте",
 			"reject-candidate": "Отклонить кандидата"
 		},
 		"HTML_EDITOR": "HTML-редактор",

@@ -6790,6 +6790,7 @@
 			"email-reset": "Réinitialisation du courrier électronique",
 			"organization-team-join-request": "Demande de rejoindre l'équipe d'organisation",
 			"payment-receipt": "Reçu de paiement",
+			"invoice-reminder": "Rappel de facture",
 			"reject-candidate": "Rejeter le Candidat"
 		},
 		"HTML_EDITOR": "Éditeur HTML",

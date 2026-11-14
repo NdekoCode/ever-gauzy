@@ -6837,6 +6837,7 @@
 			"email-reset": "Възстановяване на имейл",
 			"organization-team-join-request": "Заявка за присъединяване към екипа на организацията",
 			"payment-receipt": "Касова бележка",
+			"invoice-reminder": "Напомняне за фактура",
 			"reject-candidate": "Отхвърли кандидат"
 		},
 		"HTML_EDITOR": "HTML редактор",

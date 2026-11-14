@@ -6792,6 +6792,7 @@
 			"email-reset": "Resetta Email",
 			"organization-team-join-request": "Richiesta di adesione al team organizzativo",
 			"payment-receipt": "Ricevuta di pagamento",
+			"invoice-reminder": "Promemoria fattura",
 			"reject-candidate": "Rifiuta Candidato"
 		},
 		"HTML_EDITOR": "Editor di HTML",

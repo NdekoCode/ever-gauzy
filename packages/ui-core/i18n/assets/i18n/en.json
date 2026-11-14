@@ -7404,6 +7404,7 @@
 			"email-reset": "Email Reset",
 			"organization-team-join-request": "Organization team join request",
 			"payment-receipt": "Payment Receipt",
+			"invoice-reminder": "Invoice Reminder",
 			"reject-candidate": "Reject Candidate"
 		},
 		"HTML_EDITOR": "HTML Editor",

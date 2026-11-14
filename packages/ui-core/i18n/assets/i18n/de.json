@@ -6788,6 +6788,7 @@
 			"email-reset": "E-Mail zurücksetzen.",
 			"organization-team-join-request": "Organisationsteam beitreten Anfrage",
 			"payment-receipt": "Zahlungseingang",
+			"invoice-reminder": "Rechnungserinnerung",
 			"reject-candidate": "Kandidat ablehnen"
 		},
 		"HTML_EDITOR": "HTML-Editor",
