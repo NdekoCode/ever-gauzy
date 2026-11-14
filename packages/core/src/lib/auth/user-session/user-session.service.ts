@@ -36,8 +36,11 @@ export enum UserSessionRefusal {
 	UNNAMED_SESSION = 'SESSION_UNNAMED'
 }
 
-/** How many read-and-revoke passes a sign-out makes; each catches the tokens a refresh minted during the last one. */
-const SIGN_OUT_PASSES = 5;
+/**
+ * How many read-and-revoke passes a sign-out makes; each catches the tokens a refresh minted during the last one. One
+ * more read follows the last pass, to tell whether it finished the sign-out.
+ */
+export const SIGN_OUT_PASSES = 5;
 
 /** The access token lifetime when `JWT_TOKEN_EXPIRATION_TIME` is not set, in seconds (as `AccessTokenModule`). */
 const DEFAULT_ACCESS_TOKEN_LIFETIME_S = 24 * 60 * 60;
@@ -182,8 +185,8 @@ export class UserSessionService {
 	 * sees what the rotation minted; a rotation that comes after finds its token revoked and fails.
 	 *
 	 * @param signedOut The sessions whose marker this sign-out already wrote; the ones it writes are added.
-	 * @throws ConflictException when tokens are still being minted, or a revocation is still not revised, after
-	 * {@link SIGN_OUT_PASSES} passes.
+	 * @throws ConflictException when the read after the last of the {@link SIGN_OUT_PASSES} passes still finds a
+	 * token to revoke, or a revocation to revise.
 	 */
 	private async signOutTokens(
 		userId: ID,
@@ -200,7 +203,8 @@ export class UserSessionService {
 			return isTarget(token);
 		};
 
-		for (let pass = 1; pass <= SIGN_OUT_PASSES; pass++) {
+		const lastRead = SIGN_OUT_PASSES + 1;
+		for (let read = 1; read <= lastRead; read++) {
 			const tokens = await this.activeTokensOf(userId);
 			const targets = [...tokens.refreshTokens, ...tokens.accessTokens].filter(isPicked);
 			if (targets.length === 0) {
@@ -209,8 +213,10 @@ export class UserSessionService {
 					return;
 				}
 			}
-			await this.markSignedOut(userId, targets.map(sessionIdOf), signedOut);
-			await this.revoke(userId, targets);
+			if (read < lastRead) {
+				await this.markSignedOut(userId, targets.map(sessionIdOf), signedOut);
+				await this.revoke(userId, targets);
+			}
 		}
 		throw new ConflictException({
 			code: UserSessionRefusal.SIGN_OUT_INCOMPLETE,

@@ -15,7 +15,7 @@ import { environment } from '@gauzy/config';
 import { RequestContext } from '../../core/context/request-context';
 import { TokenStatus } from '../../token/interfaces/token.interface';
 import { USER_SESSION_SIGNED_OUT_REASON } from './user-session-revocation';
-import { UserSessionRefusal, UserSessionService } from './user-session.service';
+import { SIGN_OUT_PASSES, UserSessionRefusal, UserSessionService } from './user-session.service';
 
 const MARIE = 'marie';
 const FUTURE = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -262,6 +262,42 @@ function storeWithRefreshDuringSignOut({ legacy = false } = {}) {
 	return { service, revoked, marked };
 }
 
+/**
+ * A token store where a refresh of the laptop lands on each of the first `landings` passes of a sign-out: each time the
+ * laptop's refresh token is rotated before it can be revoked, and its successor is active.
+ */
+function storeWhereRefreshesKeepLanding(landings: number) {
+	let generation = 1;
+	let refreshTokens: any[] = [
+		token('r-web', 'REFRESH_TOKEN_TYPE', inSession('web')),
+		token('r-laptop-1', 'REFRESH_TOKEN_TYPE', inSession('laptop'))
+	];
+	const accessTokens: any[] = [token('a-web', 'ACCESS_TOKEN_TYPE', inSession('web'))];
+	const revokeById = jest.fn(async ({ tokenId }: { tokenId: string }) => {
+		refreshTokens = refreshTokens.filter((candidate) => candidate.id !== tokenId);
+		const isLanding = tokenId === `r-laptop-${generation}` && generation <= landings;
+		if (isLanding) {
+			generation++;
+			refreshTokens.push(token(`r-laptop-${generation}`, 'REFRESH_TOKEN_TYPE', inSession('laptop')));
+			return false;
+		}
+		return true;
+	});
+	const service = new UserSessionService(
+		{
+			findActive: jest.fn(async () => accessTokens),
+			findRevokedSince: jest.fn(async () => []),
+			revokeById,
+			markSessionSignedOut: jest.fn(async () => undefined)
+		} as any,
+		{ findActive: jest.fn(async () => refreshTokens), revokeById } as any,
+		{} as any,
+		{} as any,
+		{} as any
+	);
+	return { service, refreshTokens: () => refreshTokens };
+}
+
 describe('UserSessionService, a refresh landing while a sign-out runs', () => {
 	it('signs out the tokens the refresh minted for the session too', async () => {
 		const { service, revoked } = storeWithRefreshDuringSignOut();
@@ -270,6 +306,24 @@ describe('UserSessionService, a refresh landing while a sign-out runs', () => {
 		await service.signOutOthers({ password: 'right' });
 
 		expect(revoked.sort()).toEqual(['a-laptop-2', 'r-laptop-2']);
+	});
+
+	it('reports a sign-out its last pass finished as done', async () => {
+		const { service, refreshTokens } = storeWhereRefreshesKeepLanding(SIGN_OUT_PASSES - 1);
+		requestFrom('web');
+
+		await expect(service.signOut('laptop')).resolves.toBeUndefined();
+
+		expect(refreshTokens().map((candidate) => candidate.id)).toEqual(['r-web']);
+	});
+
+	it('answers a conflict when refreshes keep landing after the last pass', async () => {
+		const { service } = storeWhereRefreshesKeepLanding(SIGN_OUT_PASSES);
+		requestFrom('web');
+
+		await expect(service.signOut('laptop')).rejects.toMatchObject({
+			response: { code: UserSessionRefusal.SIGN_OUT_INCOMPLETE }
+		});
 	});
 
 	it('marks the session a refresh started during the sign-out of an old token too', async () => {
