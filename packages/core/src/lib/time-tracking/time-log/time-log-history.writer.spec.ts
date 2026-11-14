@@ -20,17 +20,23 @@ const SUBJECT = {
 /** A manager that answers the name reads from fixed rows and keeps what is saved. */
 function fakeManager() {
 	const saved: Partial<ActivityLog>[] = [];
-	const rowsOf = new Map<Function, any[]>([
-		[Task, [{ id: 'task-login', title: 'Fix login' }, { id: 'task-signup', title: 'Fix signup' }]],
+	const rowsOf = new Map<unknown, object[]>([
+		[
+			Task,
+			[
+				{ id: 'task-login', title: 'Fix login' },
+				{ id: 'task-signup', title: 'Fix signup' }
+			]
+		],
 		[OrganizationProject, [{ id: 'project-a', name: 'Website' }]],
 		[Employee, [{ id: 'employee-paul', user: { firstName: 'Paul', lastName: 'Martin' } }]]
 	]);
 	const manager = {
-		find: jest.fn(async (entity: Function, _options?: unknown) => rowsOf.get(entity) ?? []),
-		create: jest.fn((_entity: Function, row: Partial<ActivityLog>) => ({ ...row })),
-		save: jest.fn(async (_entity: Function, rows: Partial<ActivityLog>[]) => {
-			saved.push(...rows);
-			return rows;
+		find: jest.fn<Promise<object[]>, [unknown, unknown?]>(async (entity) => rowsOf.get(entity) ?? []),
+		create: jest.fn<Partial<ActivityLog>, [unknown, Partial<ActivityLog>]>((...args) => ({ ...args[1] })),
+		save: jest.fn<Promise<Partial<ActivityLog>[]>, [unknown, Partial<ActivityLog>[]]>(async (...args) => {
+			saved.push(...args[1]);
+			return args[1];
 		})
 	};
 	return { manager, saved };

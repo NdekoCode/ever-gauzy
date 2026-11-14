@@ -13,8 +13,8 @@ import { TimeLogHistoryService } from './time-log-history.service';
 describe('TimeLogHistoryService scoping', () => {
 	function setup(options: { entry?: { employeeId: string } | null; rows?: unknown[]; manages?: boolean } = {}) {
 		const manager = {
-			findOne: jest.fn(async (_entity: unknown, _options?: unknown) => options.entry ?? null),
-			find: jest.fn(async (_entity: unknown, _options?: unknown) => options.rows ?? []),
+			findOne: jest.fn<Promise<unknown>, [unknown, unknown?]>(async () => options.entry ?? null),
+			find: jest.fn<Promise<unknown[]>, [unknown, unknown?]>(async () => options.rows ?? []),
 			createQueryBuilder: jest.fn()
 		};
 		const timeLogService = {

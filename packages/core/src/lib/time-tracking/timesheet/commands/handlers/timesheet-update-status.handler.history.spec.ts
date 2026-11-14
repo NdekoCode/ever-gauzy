@@ -19,7 +19,13 @@ jest.mock('../../../time-log/time-log-history.writer', () => ({
  */
 describe('TimesheetUpdateStatusHandler: history of a status change', () => {
 	const ENTRIES = [
-		{ id: 'log-1', employeeId: 'employee-paul', organizationId: 'org-1', tenantId: 'tenant-1', timesheetId: 'ts-1' },
+		{
+			id: 'log-1',
+			employeeId: 'employee-paul',
+			organizationId: 'org-1',
+			tenantId: 'tenant-1',
+			timesheetId: 'ts-1'
+		},
 		{ id: 'log-2', employeeId: 'employee-paul', organizationId: 'org-1', tenantId: 'tenant-1', timesheetId: 'ts-1' }
 	];
 

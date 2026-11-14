@@ -142,7 +142,9 @@ export class TimeLogUpdateHandler implements ICommandHandler<TimeLogUpdateComman
 			// nothing of the previous employee has been touched (at most the new employee keeps blank slots no log
 			// holds), and the error propagates;
 			Object.assign(timeLog, changes, timesheet ? { timesheetId: timesheet.id } : {}, { timeSlots: destination });
-			await this.writeWithHistory(stored, changes, history, (repository) => this.saveUpdatedTimeLog(timeLog, repository));
+			await this.writeWithHistory(stored, changes, history, (repository) =>
+				this.saveUpdatedTimeLog(timeLog, repository)
+			);
 			timeLog = await this.typeOrmTimeLogRepository.findOneBy({ id: timeLog.id });
 			// (c) only then the previous employee's slots are released, below. If that fails, the log is fully
 			// moved, the previous employee may keep slots that no longer belong to it, and the error propagates.
@@ -530,7 +532,9 @@ export class TimeLogUpdateHandler implements ICommandHandler<TimeLogUpdateComman
 			const edited = { ...stored, ...changes } as ITimeLog;
 			const change = updatedChange(stored, edited);
 			if (change) {
-				await recordTimeLogHistory(manager, [{ subject: historySubject(edited), change, reason: history.reason }]);
+				await recordTimeLogHistory(manager, [
+					{ subject: historySubject(edited), change, reason: history.reason }
+				]);
 			}
 			return result;
 		});

@@ -58,9 +58,15 @@ describe('TimeLogUpdateHandler: history of an edit', () => {
 		const { handler, repository, transactionManager, transactionRepository, record } = setup();
 
 		await handler.execute(
-			new TimeLogUpdateCommand({ description: 'Pairing with Amina', isBillable: false }, storedLog(), null, false, {
-				reason: 'Wrong billable'
-			})
+			new TimeLogUpdateCommand(
+				{ description: 'Pairing with Amina', isBillable: false },
+				storedLog(),
+				null,
+				false,
+				{
+					reason: 'Wrong billable'
+				}
+			)
 		);
 
 		expect(repository.manager.transaction).toHaveBeenCalledTimes(1);

@@ -1,6 +1,17 @@
 import { ApiProperty, ApiPropertyOptional, OmitType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsDateString, IsEnum, IsInt, IsNotEmpty, IsOptional, IsUUID, Max, Min } from 'class-validator';
+import {
+	ArrayMaxSize,
+	IsArray,
+	IsDateString,
+	IsEnum,
+	IsInt,
+	IsNotEmpty,
+	IsOptional,
+	IsUUID,
+	Max,
+	Min
+} from 'class-validator';
 import { ID, ITimeLogHistoryFindInput, TimeLogChangeKindEnum } from '@gauzy/contracts';
 import { TenantOrganizationBaseDTO } from '../../../../core/dto';
 import { IsBeforeDate } from '../../../../shared/validators';

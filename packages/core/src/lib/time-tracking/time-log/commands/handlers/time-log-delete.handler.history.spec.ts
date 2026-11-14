@@ -51,7 +51,9 @@ describe('TimeLogDeleteHandler: history of a deletion', () => {
 	it('deletes the entries and records what each held, in one transaction', async () => {
 		const { handler, repository, transactionManager, transactionRepository, record } = setup();
 
-		await handler.execute(new TimeLogDeleteCommand([entry('log-1', 'task-login'), entry('log-2', 'task-signup')], false, {}));
+		await handler.execute(
+			new TimeLogDeleteCommand([entry('log-1', 'task-login'), entry('log-2', 'task-signup')], false, {})
+		);
 
 		expect(repository.manager.transaction).toHaveBeenCalledTimes(1);
 		expect(repository.softDelete).not.toHaveBeenCalled();

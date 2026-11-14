@@ -28,7 +28,10 @@ describe('ActivityLogService.findActivityLogs and time entry history', () => {
 	it('answers no row, without reading, for entity=TimeLog', async () => {
 		const { service, findAll } = setup();
 
-		const answer = await service.findActivityLogs({ organizationId: 'org-1', entity: BaseEntityEnum.TimeLog } as never);
+		const answer = await service.findActivityLogs({
+			organizationId: 'org-1',
+			entity: BaseEntityEnum.TimeLog
+		} as never);
 
 		expect(answer).toEqual({ items: [], total: 0 });
 		expect(findAll).not.toHaveBeenCalled();

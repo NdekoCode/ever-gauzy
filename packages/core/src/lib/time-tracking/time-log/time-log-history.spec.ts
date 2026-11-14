@@ -57,7 +57,11 @@ describe('time log history rules', () => {
 			});
 
 			expect(change.updatedFields).toEqual(['taskId', 'description', 'isBillable']);
-			expect(change.previousValues).toEqual([{ taskId: 'task-login' }, { description: null }, { isBillable: true }]);
+			expect(change.previousValues).toEqual([
+				{ taskId: 'task-login' },
+				{ description: null },
+				{ isBillable: true }
+			]);
 			expect(change.updatedValues).toEqual([
 				{ taskId: 'task-signup' },
 				{ description: 'Pairing with Amina' },
@@ -66,7 +70,9 @@ describe('time log history rules', () => {
 		});
 
 		it('records nothing for a save that changes no tracked field', () => {
-			expect(updatedChange(ENTRY, { ...ENTRY, startedAt: '2026-11-10T09:00:00.000Z', description: '' })).toBeNull();
+			expect(
+				updatedChange(ENTRY, { ...ENTRY, startedAt: '2026-11-10T09:00:00.000Z', description: '' })
+			).toBeNull();
 		});
 
 		it('leaves the duration out when both ends move by the same amount', () => {
@@ -125,9 +131,9 @@ describe('time log history rules', () => {
 		it('names the kinds of a change from its action and fields', () => {
 			expect(timeLogChangeKinds(ActionTypeEnum.Created, ['startedAt'])).toEqual([TimeLogChangeKindEnum.CREATED]);
 			expect(timeLogChangeKinds(ActionTypeEnum.Deleted, ['taskId'])).toEqual([TimeLogChangeKindEnum.DELETED]);
-			expect(timeLogChangeKinds(ActionTypeEnum.Updated, ['stoppedAt', 'duration', 'organizationContactId'])).toEqual(
-				[TimeLogChangeKindEnum.TIME, TimeLogChangeKindEnum.PROJECT]
-			);
+			expect(
+				timeLogChangeKinds(ActionTypeEnum.Updated, ['stoppedAt', 'duration', 'organizationContactId'])
+			).toEqual([TimeLogChangeKindEnum.TIME, TimeLogChangeKindEnum.PROJECT]);
 			expect(timeLogChangeKinds(ActionTypeEnum.Updated, ['status'])).toEqual([TimeLogChangeKindEnum.STATUS]);
 		});
 	});
@@ -138,9 +144,9 @@ describe('time log history rules', () => {
 			const ids = referencedIds([change]);
 
 			expect([...ids.get('taskId')]).toEqual(['task-login', 'task-signup']);
-			expect(
-				referencedEntities(change.previousValues, new Map([['task-login', 'Fix login']]))
-			).toEqual([{ taskId: { id: 'task-login', name: 'Fix login' } }]);
+			expect(referencedEntities(change.previousValues, new Map([['task-login', 'Fix login']]))).toEqual([
+				{ taskId: { id: 'task-login', name: 'Fix login' } }
+			]);
 			expect(referencedEntities(change.updatedValues, new Map())).toEqual([
 				{ taskId: { id: 'task-signup', name: null } }
 			]);

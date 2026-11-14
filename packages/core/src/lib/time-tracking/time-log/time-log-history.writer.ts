@@ -10,12 +10,7 @@ import {
 	OrganizationTeam,
 	Task
 } from '../../core/entities/internal';
-import {
-	referencedEntities,
-	referencedIds,
-	TimeLogHistoryChange,
-	TimeLogReferenceField
-} from './time-log-history';
+import { referencedEntities, referencedIds, TimeLogHistoryChange, TimeLogReferenceField } from './time-log-history';
 
 /**
  * Asks a time log command to record the change in the entry's history. Only the routes through which a person

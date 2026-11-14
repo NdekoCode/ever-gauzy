@@ -209,7 +209,9 @@ describe('TimeLogCreateHandler: history of time added by hand', () => {
 		const { handler } = createHandler();
 		const transactionRepository = { save: jest.fn(async (timeLog: TimeLog) => timeLog) };
 		const transactionManager = { getRepository: jest.fn(() => transactionRepository) };
-		const repository = (handler as any).typeOrmTimeLogRepository;
+		type RepositoryDouble = { save: jest.Mock; manager?: { transaction: jest.Mock } };
+		const repository = (handler as unknown as { typeOrmTimeLogRepository: RepositoryDouble })
+			.typeOrmTimeLogRepository;
 		repository.manager = {
 			transaction: jest.fn(async (work: (manager: unknown) => Promise<void>) => work(transactionManager))
 		};
@@ -219,7 +221,8 @@ describe('TimeLogCreateHandler: history of time added by hand', () => {
 	}
 
 	it('writes the entry and its "created" row in one transaction, with the reason given', async () => {
-		const { handler, repository, transactionManager, transactionRepository, record } = createHandlerWithTransaction();
+		const { handler, repository, transactionManager, transactionRepository, record } =
+			createHandlerWithTransaction();
 
 		await handler.execute(
 			new TimeLogCreateCommand(input({ stoppedAt: STOPPED_AT, reason: 'Forgot to start timer' }), {

@@ -122,7 +122,7 @@ export function timeLogHistoryValues(entry: TimeLogHistorySource): TimeLogHistor
 
 /** `[{ field: value }, ...]`, the shape the activity log keeps values in. */
 function asValueList(values: TimeLogHistoryValues, fields: readonly string[]): IActivityLogUpdatedValues[] {
-	return fields.map((field) => ({ [field]: values[field] } as unknown as IActivityLogUpdatedValues));
+	return fields.map((field) => ({ [field]: values[field] }) as unknown as IActivityLogUpdatedValues);
 }
 
 /** The fields of `values` that hold something. */
@@ -214,7 +214,10 @@ export function statusChange(previousStatus: string | null | undefined, status: 
  * @param action The row's action.
  * @param updatedFields The row's changed fields.
  */
-export function timeLogChangeKinds(action: ActionTypeEnum, updatedFields: readonly string[] = []): TimeLogChangeKindEnum[] {
+export function timeLogChangeKinds(
+	action: ActionTypeEnum,
+	updatedFields: readonly string[] = []
+): TimeLogChangeKindEnum[] {
 	if (action === ActionTypeEnum.Created) {
 		return [TimeLogChangeKindEnum.CREATED];
 	}
