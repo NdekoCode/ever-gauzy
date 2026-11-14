@@ -2,11 +2,19 @@
 import '../../core/entities/internal';
 
 import { ActionTypeEnum, ActorTypeEnum, BaseEntityEnum } from '@gauzy/contracts';
+import { isBetterSqlite3 } from '@gauzy/config';
 import { RequestContext } from '../../core/context';
 import { Employee, OrganizationProject, Task } from '../../core/entities/internal';
 import { ActivityLog } from '../../activity-log/activity-log.entity';
 import { updatedChange } from './time-log-history';
 import { recordTimeLogHistory } from './time-log-history.writer';
+
+// The database the writer runs on; better-sqlite3 is switched on per test.
+jest.mock('@gauzy/config', () => ({
+	...jest.requireActual('@gauzy/config'),
+	isBetterSqlite3: jest.fn(() => false),
+	isSqlite: jest.fn(() => false)
+}));
 
 const SUBJECT = {
 	id: 'log-1',
@@ -46,7 +54,10 @@ describe('recordTimeLogHistory', () => {
 	beforeEach(() => {
 		jest.spyOn(RequestContext, 'currentEmployeeId').mockReturnValue('employee-manager');
 	});
-	afterEach(() => jest.restoreAllMocks());
+	afterEach(() => {
+		jest.mocked(isBetterSqlite3).mockReturnValue(false);
+		jest.restoreAllMocks();
+	});
 
 	it('writes one TimeLog row per change, with the owner and the reason in data and the editor as author', async () => {
 		const { manager, saved } = fakeManager();
@@ -92,6 +103,17 @@ describe('recordTimeLogHistory', () => {
 		await recordTimeLogHistory(manager as never, [{ subject: { ...SUBJECT, tenantId: undefined }, change }]);
 
 		expect(saved[0].tenantId).toBe('tenant-1');
+	});
+
+	it('stores the JSON fields as text on SQLite, the changed fields included', async () => {
+		jest.mocked(isBetterSqlite3).mockReturnValue(true);
+		const { manager, saved } = fakeManager();
+		const change = updatedChange({ taskId: 'task-login' }, { taskId: 'task-signup' });
+
+		await recordTimeLogHistory(manager as never, [{ subject: SUBJECT, change }]);
+
+		expect(saved[0].updatedFields).toBe('["taskId"]');
+		expect(saved[0].previousValues).toBe('[{"taskId":"task-login"}]');
 	});
 
 	it('writes nothing, and reads nothing, for no change', async () => {

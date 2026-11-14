@@ -1,7 +1,8 @@
 import { EntityManager, In } from 'typeorm';
 import { ActorTypeEnum, BaseEntityEnum, ID, ITimeLog } from '@gauzy/contracts';
+import { isBetterSqlite3, isSqlite } from '@gauzy/config';
 import { ActivityLog } from '../../activity-log/activity-log.entity';
-import { generateActivityLogDescription } from '../../activity-log/activity-log.helper';
+import { generateActivityLogDescription, serializeActivityLogForSqlite } from '../../activity-log/activity-log.helper';
 import { RequestContext } from '../../core/context';
 import {
 	Employee,
@@ -167,8 +168,8 @@ export async function recordTimeLogHistory(
 	const names = await loadReferenceNames(manager, ids, tenantId);
 	const authorEmployeeId = RequestContext.currentEmployeeId() ?? RequestContext.currentUser()?.employeeId ?? null;
 
-	const rows = records.map(({ subject, change, reason }) =>
-		manager.create(ActivityLog, {
+	const rows = records.map(({ subject, change, reason }) => {
+		let row: Record<string, unknown> = {
 			entity: BaseEntityEnum.TimeLog,
 			entityId: subject.id,
 			action: change.action,
@@ -187,7 +188,12 @@ export async function recordTimeLogHistory(
 			employeeId: authorEmployeeId,
 			organizationId: subject.organizationId,
 			tenantId: subject.tenantId ?? tenantId
-		})
-	);
+		};
+		if (isSqlite() || isBetterSqlite3()) {
+			// SQLite stores these JSON fields as text, and the subscriber leaves the changed fields as an array.
+			row = serializeActivityLogForSqlite(row);
+		}
+		return manager.create(ActivityLog, row);
+	});
 	await manager.save(ActivityLog, rows);
 }
