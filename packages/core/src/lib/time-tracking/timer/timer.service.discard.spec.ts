@@ -70,7 +70,7 @@ function createService(
 	ormType: MultiORMEnum,
 	rows: TimeLogRow[],
 	employee: Record<string, unknown>,
-	hooks: { beforeDelete?: () => void; afterDelete?: () => void; failDelete?: boolean } = {}
+	hooks: { beforeDelete?: () => void | Promise<void>; afterDelete?: () => void; failDelete?: boolean } = {}
 ) {
 	const typeOrmTimeLogRepository = {
 		findOne: async ({ where }: { where: Record<string, unknown> }) => findRows(rows, where)[0] ?? null,
@@ -93,7 +93,7 @@ function createService(
 	};
 	const execute = jest.fn(async (command: object) => {
 		if (command instanceof TimeLogDeleteCommand) {
-			hooks.beforeDelete?.();
+			await hooks.beforeDelete?.();
 			if (hooks.failDelete) {
 				throw new Error('The database went away while the run was removed.');
 			}
@@ -192,7 +192,7 @@ describe.each([MultiORMEnum.TypeORM, MultiORMEnum.MikroORM])('TimerService disca
 	const setup = (
 		rows: TimeLogRow[],
 		organization: OrganizationSettings = {},
-		hooks: { beforeDelete?: () => void; afterDelete?: () => void; failDelete?: boolean } = {}
+		hooks: { beforeDelete?: () => void | Promise<void>; afterDelete?: () => void; failDelete?: boolean } = {}
 	) =>
 		createService(
 			ormType,
@@ -234,6 +234,37 @@ describe.each([MultiORMEnum.TypeORM, MultiORMEnum.MikroORM])('TimerService disca
 	afterEach(() => {
 		restore();
 		jest.restoreAllMocks();
+	});
+
+	it("takes the employee's turn: a start or stop of the same employee in this process waits for the discard", async () => {
+		const rows = [runningLog()];
+		const order: string[] = [];
+		let queued: Promise<void> | undefined;
+		const { service } = setup(
+			rows,
+			{},
+			{
+				beforeDelete: async () => {
+					order.push('the discard removes the run');
+					// A start of the same employee arrives while the run is being removed
+					const turnTaking = service as unknown as {
+						inEmployeeTurn: (employeeId: string, work: () => Promise<void>) => Promise<void>;
+					};
+					queued = turnTaking.inEmployeeTurn(EMPLOYEE_ID, async () => {
+						order.push('the start runs');
+					});
+					await new Promise((resolve) => setTimeout(resolve, 0));
+				},
+				afterDelete: () => {
+					order.push('the run is removed');
+				}
+			}
+		);
+
+		await discard(service);
+		await queued;
+
+		expect(order).toEqual(['the discard removes the run', 'the run is removed', 'the start runs']);
 	});
 
 	it('removes the running log with its slots through the time log delete, and the employee no longer tracks time', async () => {
@@ -307,7 +338,16 @@ describe.each([MultiORMEnum.TypeORM, MultiORMEnum.MikroORM])('TimerService disca
 			startedAt: NOW,
 			stoppedAt: NOW
 		});
-		const { service } = setup(rows, {}, { beforeDelete: () => rows.push(newRun), failDelete: true });
+		const { service } = setup(
+			rows,
+			{},
+			{
+				beforeDelete: () => {
+					rows.push(newRun);
+				},
+				failDelete: true
+			}
+		);
 
 		await expect(discard(service)).rejects.toThrow('The database went away');
 		expect(rows).toEqual([

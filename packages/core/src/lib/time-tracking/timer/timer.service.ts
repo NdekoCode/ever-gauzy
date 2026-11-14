@@ -1072,42 +1072,49 @@ export class TimerService {
 			throw new ForbiddenException(disabledRefusal);
 		}
 
-		const includeTimeSlots = true;
-		const runningLog = await this.getLastRunningLog(includeTimeSlots);
-		if (!runningLog) {
-			throw new BadRequestException('No timer is running: there is nothing to discard.');
-		}
-
-		this.assertDiscardIsForRunningLog(request, runningLog);
-
-		const tooLateRefusal = discardTooLateRefusal(
-			employee.organization,
-			runningLog.startedAt,
-			moment.utc().toDate()
-		);
-		if (tooLateRefusal) {
-			throw new ForbiddenException(tooLateRefusal);
-		}
-
-		// A stop from another tab or device may have landed since the read: it kept the entry, which is never removed
-		const isClaimed = await this.claimRunningLog(runningLog.id);
-		if (!isClaimed) {
-			throw new BadRequestException('No timer is running: there is nothing to discard.');
-		}
-
 		const tenantId = RequestContext.currentTenantId() ?? request.tenantId;
 		const { id: employeeId, organizationId } = employee;
 
-		const forceDelete = true;
-		try {
-			await this._commandBus.execute(new TimeLogDeleteCommand(runningLog as TimeLog, forceDelete));
-		} catch (error) {
-			await this.releaseRunningLog(runningLog.id, employeeId, organizationId, tenantId);
-			throw error;
-		}
+		// In this process, no start or stop of the employee comes between the read of the run, its removal and the
+		// tracking status written after it, as for a start or a stop (inEmployeeTurn)
+		await this.inEmployeeTurn(employeeId, async (turn) => {
+			const includeTimeSlots = true;
+			const runningLog = await this.getLastRunningLog(includeTimeSlots);
+			if (!runningLog) {
+				throw new BadRequestException('No timer is running: there is nothing to discard.');
+			}
 
-		// A run another device started meanwhile is left running, and keeps the employee tracking
-		await this.markNotTrackingWhenNothingRuns(employeeId, organizationId, tenantId);
+			this.assertDiscardIsForRunningLog(request, runningLog);
+
+			const tooLateRefusal = discardTooLateRefusal(
+				employee.organization,
+				runningLog.startedAt,
+				moment.utc().toDate()
+			);
+			if (tooLateRefusal) {
+				throw new ForbiddenException(tooLateRefusal);
+			}
+
+			// A discard whose reads took so long that the next start or stop went on leaves the run to that one
+			turn.assertHeld();
+
+			// A stop from another process may have landed since the read: it kept the entry, which is never removed
+			const isClaimed = await this.claimRunningLog(runningLog.id);
+			if (!isClaimed) {
+				throw new BadRequestException('No timer is running: there is nothing to discard.');
+			}
+
+			const forceDelete = true;
+			try {
+				await this._commandBus.execute(new TimeLogDeleteCommand(runningLog as TimeLog, forceDelete));
+			} catch (error) {
+				await this.releaseRunningLog(runningLog.id, employeeId, organizationId, tenantId);
+				throw error;
+			}
+
+			// A run another device started meanwhile is left running, and keeps the employee tracking
+			await this.markNotTrackingWhenNothingRuns(employeeId, organizationId, tenantId);
+		});
 	}
 
 	/**
