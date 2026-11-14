@@ -30,7 +30,6 @@ describe('EmployeeController and the pay rate', () => {
 				pagination,
 				countBy,
 				assertOwnPayRateUnchanged,
-				ratesBeforeUpdate: jest.fn().mockResolvedValue(null),
 				repriceTimeFrom: jest.fn().mockResolvedValue(undefined)
 			} as never,
 			{ execute } as never,

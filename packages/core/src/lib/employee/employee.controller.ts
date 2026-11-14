@@ -59,7 +59,6 @@ import {
 	EmployeeListQueryDTO
 } from './dto';
 import { withoutOwnPayRateWrite, withoutPayRateCriteria, withoutPayRateKeys } from './pay-rate';
-import { MemberRatesSent } from '../time-tracking/time-log/time-log-repricing';
 import { RespondsWithPayRate } from '../core/interceptors/employee-pay-rate-scrub';
 import { SensitiveRelations } from '../core/decorators/sensitive-relations.decorator';
 import { SensitiveRelationsInterceptor } from '../core/interceptors/sensitive-relations.interceptor';
@@ -470,9 +469,8 @@ export class EmployeeController extends CrudController<Employee> {
 			this._employeeService.assertMayRepriceTimeOf(id);
 		}
 		const changes = withoutOwnPayRateWrite(id, input);
-		const previous = await this._employeeService.ratesBeforeUpdate(id, changes);
 		const employee = await this._commandBus.execute(new EmployeeUpdateCommand(id, changes));
-		return await this.withRepricedTime(id, employee, changes, ratesApplyFrom, previous);
+		return await this.withRepricedTime(id, employee, changes, ratesApplyFrom);
 	}
 
 	/**
@@ -484,10 +482,9 @@ export class EmployeeController extends CrudController<Employee> {
 		id: ID,
 		employee: IEmployee,
 		changes: IEmployeeUpdateInput,
-		ratesApplyFrom: string | undefined,
-		previous: MemberRatesSent | null
+		ratesApplyFrom: string | undefined
 	): Promise<IEmployee> {
-		const repricedTimeLogs = await this._employeeService.repriceTimeFrom(id, changes, ratesApplyFrom, previous);
+		const repricedTimeLogs = await this._employeeService.repriceTimeFrom(id, changes, ratesApplyFrom);
 		if (repricedTimeLogs === undefined) {
 			return employee;
 		}
@@ -538,9 +535,8 @@ export class EmployeeController extends CrudController<Employee> {
 		if (ratesApplyFrom) {
 			this._employeeService.assertMayRepriceTimeOf(id);
 		}
-		const previous = await this._employeeService.ratesBeforeUpdate(id, changes);
 		const employee = await this._commandBus.execute(new EmployeeUpdateCommand(id, changes));
-		return await this.withRepricedTime(id, employee, changes, ratesApplyFrom, previous);
+		return await this.withRepricedTime(id, employee, changes, ratesApplyFrom);
 	}
 
 	/**

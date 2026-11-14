@@ -1,4 +1,4 @@
-import { EntityManager } from 'typeorm';
+import { Brackets, EntityManager } from 'typeorm';
 import { ID } from '@gauzy/contracts';
 import { prepareSQLQuery as p } from '../../database/database.helper';
 import { NOT_ON_LIVE_INVOICE_PARAMETERS, notOnLiveInvoice } from '../../invoice-item/invoice-item-billed-time';
@@ -54,6 +54,9 @@ export interface MemberRatesSent {
  * Without one, all of them, invoiced time too: every report priced each hour at the current rate before time logs
  * stored their rates, and an organization whose time logs do not keep their rates reads its reports as it did.
  *
+ * Only the logs whose stored rates differ from the new ones are written: a change sent again completes a re-pricing
+ * that failed half-way, and a change that changes nothing writes nothing.
+ *
  * @param manager The TypeORM entity manager, which runs under both ORMs.
  * @param time The organization's time from the day.
  * @param where The logs among it the rate prices (an employee, a project, or both).
@@ -81,8 +84,26 @@ async function reprice(
 	for (const [column, id] of Object.entries(where)) {
 		query.andWhere(p(`"${column}" = :${column}`), { [column]: id });
 	}
+	query.andWhere(differsFrom(values));
 	const { affected } = await query.execute();
 	return affected ?? 0;
+}
+
+/**
+ * The logs whose stored rates differ from the given ones, a null stored or given value counting as a value: written
+ * per column, `IS DISTINCT FROM` being Postgres's alone.
+ */
+function differsFrom(values: Partial<TimeLog>): Brackets {
+	return new Brackets((query) => {
+		Object.entries(values).forEach(([column, value], index) => {
+			if (value === null || value === undefined) {
+				query.orWhere(p(`"${column}" IS NOT NULL`));
+				return;
+			}
+			const parameter = `differs${index}`;
+			query.orWhere(p(`("${column}" IS NULL OR "${column}" <> :${parameter})`), { [parameter]: value });
+		});
+	});
 }
 
 /**

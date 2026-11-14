@@ -281,6 +281,24 @@ describe('re-pricing time from a day', () => {
 	);
 
 	it(
+		'writes only the logs whose stored rate differs: sent again, a change completes one that failed',
+		async () => {
+			// A change whose re-pricing failed half-way: September already took the rate, October did not
+			await dataSource.query(`UPDATE "time_log" SET "billRateValue" = 50 WHERE "id" = ?`, [LOG.september]);
+
+			expect(await repricing.repriceMemberTime(dataSource.manager, allTime, MARIE, { billRateValue: 50 })).toBe(
+				2
+			);
+			expect(await ratesOf(LOG.october)).toMatchObject({ billRateValue: 50 });
+			// Sent once more, it finds nothing left to write
+			expect(await repricing.repriceMemberTime(dataSource.manager, allTime, MARIE, { billRateValue: 50 })).toBe(
+				0
+			);
+		},
+		TIMEOUT
+	);
+
+	it(
 		"reads whether the organization's time logs keep their rates: not unless it turned it on",
 		async () => {
 			const scope = { tenantId: TENANT, organizationId: ORGANIZATION };

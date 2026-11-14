@@ -649,12 +649,11 @@ export class EmployeeResolver {
 	/**
 	 * The update both edit mutations dispatch, then the time a rate it changed re-prices, as on the REST routes: all
 	 * the time already tracked unless the organization's time logs keep their rates (see
-	 * EmployeeService.repriceTimeFrom). The rates are read before the save, to tell what it changed.
+	 * EmployeeService.repriceTimeFrom).
 	 */
 	private async updateAndReprice(id: Id, changes: IEmployeeUpdateInput): Promise<Employee> {
-		const previous = await this.employeeService.ratesBeforeUpdate(id, changes);
 		const employee = await this.commandBus.execute(new EmployeeUpdateCommand(id, changes));
-		await this.employeeService.repriceTimeFrom(id, changes, undefined, previous);
+		await this.employeeService.repriceTimeFrom(id, changes, undefined);
 		return employee;
 	}
 

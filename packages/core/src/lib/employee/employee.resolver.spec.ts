@@ -117,7 +117,6 @@ function surfaces() {
 		delete: jest.fn().mockResolvedValue({ affected: 1 }),
 		softRemovedById: jest.fn().mockResolvedValue({ ...ROWS[0], deletedAt: new Date('2026-04-01T10:00:00.000Z') }),
 		softRecoverById: jest.fn().mockResolvedValue({ ...ROWS[0], deletedAt: null }),
-		ratesBeforeUpdate: jest.fn().mockResolvedValue(null),
 		repriceTimeFrom: jest.fn().mockResolvedValue(undefined)
 	};
 	const commandBus = { execute: jest.fn().mockResolvedValue(ROWS[0]) };
@@ -976,17 +975,14 @@ describe('EmployeeResolver — one concept, two protocols, the same operations',
 
 	it('gives a rate change the re-pricing its REST route gives', async () => {
 		const { resolver, commandBus, employeeService } = surfaces();
-		const previous = { billRateValue: 120 };
-		employeeService.ratesBeforeUpdate.mockResolvedValueOnce(previous);
 
 		await resolver.updateEmployeeProfile({ id: FIRST, billRateValue: 150 });
 
 		const command = commandBus.execute.mock.calls[0][0];
-		expect(employeeService.ratesBeforeUpdate).toHaveBeenCalledWith(FIRST, command.input);
-		expect(employeeService.ratesBeforeUpdate.mock.invocationCallOrder[0]).toBeLessThan(
-			commandBus.execute.mock.invocationCallOrder[0]
+		expect(employeeService.repriceTimeFrom).toHaveBeenCalledWith(FIRST, command.input, undefined);
+		expect(commandBus.execute.mock.invocationCallOrder[0]).toBeLessThan(
+			employeeService.repriceTimeFrom.mock.invocationCallOrder[0]
 		);
-		expect(employeeService.repriceTimeFrom).toHaveBeenCalledWith(FIRST, command.input, undefined, previous);
 	});
 
 	it('edits the caller’s own profile through the same command its route dispatches', async () => {

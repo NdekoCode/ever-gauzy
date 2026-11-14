@@ -1277,56 +1277,24 @@ export class EmployeeService extends TenantAwareCrudService<Employee> {
 	}
 
 	/**
-	 * The employee's rates before an update that sends one, to tell afterwards whether it changed them.
-	 *
-	 * @param employeeId - The employee the update is about to change.
-	 * @param changes - The update as it will be written.
-	 * @returns The billing and pay rates and their currencies, or null when the update sends no rate.
-	 */
-	async ratesBeforeUpdate(employeeId: ID, changes: IEmployeeUpdateInput): Promise<MemberRatesSent | null> {
-		if (!sendsRates(ratesSentBy(changes))) {
-			return null;
-		}
-		const tenantId = RequestContext.currentTenantId();
-		const employee = await this.typeOrmRepository.findOne({
-			where: { id: employeeId, tenantId },
-			select: { id: true, billRateValue: true, billRateCurrency: true, payRateValue: true, payRateCurrency: true }
-		});
-		if (!employee) {
-			return null;
-		}
-		return {
-			billRateValue: employee.billRateValue ?? null,
-			billRateCurrency: employee.billRateCurrency ?? null,
-			payRateValue: employee.payRateValue ?? null,
-			payRateCurrency: employee.payRateCurrency ?? null
-		};
-	}
-
-	/**
 	 * Gives the employee's time logs the billing or pay rate the update sent (see time-log-repricing.ts): with a day,
 	 * the ones started on or after it. Without one, all of them, as before time logs stored their rates, when the update
-	 * changed a rate, unless the organization's time logs keep their rates: then past time keeps its price.
+	 * sends a rate, unless the organization's time logs keep their rates: then past time keeps its price. Only the logs
+	 * whose stored rate differs are written, so the same update sent again completes a re-pricing that failed.
 	 *
 	 * @param employeeId - The employee the update changed.
 	 * @param changes - The update as it was written.
 	 * @param from - The day the new rates price time from, if the update named one.
-	 * @param previous - The rates before the update (see {@link ratesBeforeUpdate}); when not given, any rate the
-	 *   update sends counts as a change.
 	 * @returns How many time logs took the new rates, or undefined when none was re-priced.
 	 */
 	async repriceTimeFrom(
 		employeeId: ID,
 		changes: IEmployeeUpdateInput,
-		from: Date | string | undefined,
-		previous?: MemberRatesSent | null
+		from: Date | string | undefined
 	): Promise<number | undefined> {
 		const sent = ratesSentBy(changes);
-		if (!from) {
-			const changed = previous === undefined ? sendsRates(sent) : changesRates(previous, sent);
-			if (!changed) {
-				return undefined;
-			}
+		if (!from && !sendsRates(sent)) {
+			return undefined;
 		}
 		const tenantId = RequestContext.currentTenantId();
 		const employee = await this.typeOrmRepository.findOne({
@@ -1362,29 +1330,6 @@ function ratesSentBy(changes: IEmployeeUpdateInput): MemberRatesSent {
 /** Whether an update sends any rate or rate currency. */
 function sendsRates(sent: MemberRatesSent): boolean {
 	return Object.values(sent).some((value) => value !== undefined);
-}
-
-/**
- * Whether the rates an update sent differ from the ones before it: a rate as a number (`40` and `'40.00'` are the
- * same rate), a currency with an empty one as none.
- */
-function changesRates(previous: MemberRatesSent | null, sent: MemberRatesSent): boolean {
-	if (!previous) {
-		return false;
-	}
-	const rateOf = (rate: number | string | null | undefined) =>
-		rate === null || rate === undefined ? null : Number(rate);
-	const currencyOf = (currency: string | null | undefined) => currency || null;
-	const changesRate = (key: 'billRateValue' | 'payRateValue') =>
-		sent[key] !== undefined && rateOf(sent[key]) !== rateOf(previous[key]);
-	const changesCurrency = (key: 'billRateCurrency' | 'payRateCurrency') =>
-		sent[key] !== undefined && currencyOf(sent[key]) !== currencyOf(previous[key]);
-	return (
-		changesRate('billRateValue') ||
-		changesRate('payRateValue') ||
-		changesCurrency('billRateCurrency') ||
-		changesCurrency('payRateCurrency')
-	);
 }
 
 function toPayRateNumber(rate: number | string | null): number | null {

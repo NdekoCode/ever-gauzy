@@ -73,9 +73,7 @@ describe('re-pricing an employee time from a day', () => {
 		});
 
 		it("re-prices all the time already tracked without a day, where the organization's time logs follow the rate", async () => {
-			const count = await service.repriceTimeFrom('employee-2', { billRateValue: 50 } as never, undefined, {
-				billRateValue: 40
-			});
+			const count = await service.repriceTimeFrom('employee-2', { billRateValue: 50 } as never, undefined);
 
 			expect(count).toBe(7);
 			expect(keepsTimeLogRates).toHaveBeenCalledWith('manager', {
@@ -94,48 +92,17 @@ describe('re-pricing an employee time from a day', () => {
 			(keepsTimeLogRates as jest.Mock).mockResolvedValue(true);
 
 			expect(
-				await service.repriceTimeFrom('employee-2', { billRateValue: 50 } as never, undefined, {
-					billRateValue: 40
-				})
+				await service.repriceTimeFrom('employee-2', { billRateValue: 50 } as never, undefined)
 			).toBeUndefined();
 			expect(repriceMemberTime).not.toHaveBeenCalled();
 		});
 
-		it('re-prices nothing without a day when the update leaves the rates as they were', async () => {
-			// A decimal column reads back as a string: '50.00' is the rate 50
-			const sameRate = { billRateValue: '50.00', billRateCurrency: 'EUR' } as never;
-
+		it('re-prices nothing without a day for an update that sends no rate', async () => {
 			expect(
-				await service.repriceTimeFrom(
-					'employee-2',
-					{ billRateValue: 50, billRateCurrency: 'EUR' } as never,
-					undefined,
-					sameRate
-				)
-			).toBeUndefined();
-			expect(
-				await service.repriceTimeFrom('employee-2', { firstName: 'Ana' } as never, undefined, null)
+				await service.repriceTimeFrom('employee-2', { firstName: 'Ana' } as never, undefined)
 			).toBeUndefined();
 			expect(keepsTimeLogRates).not.toHaveBeenCalled();
 			expect(repriceMemberTime).not.toHaveBeenCalled();
-		});
-
-		it('reads the rates an update is about to change, and nothing for an update that sends none', async () => {
-			findOne.mockResolvedValueOnce({
-				id: 'employee-2',
-				billRateValue: 40,
-				billRateCurrency: 'EUR',
-				payRateValue: null,
-				payRateCurrency: null
-			} as never);
-
-			expect(await service.ratesBeforeUpdate('employee-2', { billRateValue: 50 } as never)).toEqual({
-				billRateValue: 40,
-				billRateCurrency: 'EUR',
-				payRateValue: null,
-				payRateCurrency: null
-			});
-			expect(await service.ratesBeforeUpdate('employee-2', { firstName: 'Ana' } as never)).toBeNull();
 		});
 	});
 
@@ -143,21 +110,17 @@ describe('re-pricing an employee time from a day', () => {
 		let execute: jest.Mock;
 		let assertMayRepriceTimeOf: jest.Mock;
 		let repriceTimeFrom: jest.Mock;
-		let ratesBeforeUpdate: jest.Mock;
 		let controller: EmployeeController;
-		const previous = { billRateValue: 40 };
 
 		beforeEach(() => {
 			execute = jest.fn(async () => ({ id: 'employee-2' }));
 			assertMayRepriceTimeOf = jest.fn();
 			repriceTimeFrom = jest.fn(async () => 12);
-			ratesBeforeUpdate = jest.fn(async () => previous);
 			controller = new EmployeeController(
 				{
 					assertOwnPayRateUnchanged: jest.fn(),
 					assertMayRepriceTimeOf,
-					repriceTimeFrom,
-					ratesBeforeUpdate
+					repriceTimeFrom
 				} as never,
 				{ execute } as never,
 				{} as never,
@@ -177,11 +140,8 @@ describe('re-pricing an employee time from a day', () => {
 			expect(repriceTimeFrom).toHaveBeenCalledWith(
 				'employee-2',
 				{ billRateValue: 50 },
-				'2026-10-01T00:00:00.000Z',
-				previous
+				'2026-10-01T00:00:00.000Z'
 			);
-			// The rates are read before the save, to tell what it changes
-			expect(ratesBeforeUpdate.mock.invocationCallOrder[0]).toBeLessThan(execute.mock.invocationCallOrder[0]);
 			expect(answer).toEqual({ id: 'employee-2', repricedTimeLogs: 12 });
 		});
 
@@ -202,7 +162,7 @@ describe('re-pricing an employee time from a day', () => {
 			const answer = await controller.update('employee-2', { billRateValue: 50 } as never);
 
 			expect(answer).toEqual({ id: 'employee-2' });
-			expect(repriceTimeFrom).toHaveBeenCalledWith('employee-2', { billRateValue: 50 }, undefined, previous);
+			expect(repriceTimeFrom).toHaveBeenCalledWith('employee-2', { billRateValue: 50 }, undefined);
 		});
 
 		it('says how many time logs took the rates when a change without a day re-priced them', async () => {
