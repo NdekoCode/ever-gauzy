@@ -1,5 +1,6 @@
 import '../core/entities/internal';
 
+import { UnauthorizedException } from '@nestjs/common';
 import { sign } from 'jsonwebtoken';
 import { RequestContext } from '../core/context';
 import { AuthService } from './auth.service';
@@ -28,6 +29,8 @@ function buildAuthService() {
 	const service: AuthService = Object.create(AuthService.prototype);
 	const accessPayloads: Record<string, unknown>[] = [];
 	const refreshPayloads: Record<string, unknown>[] = [];
+	/** The sessions Marie signed out: their sign-out markers. */
+	const signedOut = new Set<string>();
 
 	Object.assign(service, {
 		ormType: 'typeorm',
@@ -38,7 +41,8 @@ function buildAuthService() {
 			generate: jest.fn(async (_userId: string, payload: Record<string, unknown>) => {
 				accessPayloads.push(payload);
 				return `access-${accessPayloads.length}`;
-			})
+			}),
+			isSessionSignedOut: jest.fn(async (_userId: string, sessionId: string) => signedOut.has(sessionId))
 		},
 		refreshTokenService: {
 			generate: jest.fn(async (_userId: string, payload: Record<string, unknown>) => {
@@ -54,7 +58,7 @@ function buildAuthService() {
 		resolveRefreshOrganizationId: jest.fn(async () => ORG)
 	});
 
-	return { service, accessPayloads, refreshPayloads };
+	return { service, accessPayloads, refreshPayloads, signedOut };
 }
 
 /** A request, public (a sign-in) or made by `userId` with a bearer token carrying `claims`. */
@@ -146,5 +150,56 @@ describe('AuthService, the session a minted token names', () => {
 		await service.getJwtAccessToken(user, ORG, { oauthApp: { clientId: 'app', scopes: ['read'] } as any });
 
 		expect(accessPayloads[0].sessionId).toBeUndefined();
+	});
+});
+
+/**
+ * A session its user signed out gets no new token (ever-co/ever-gauzy#11921): a request authenticated just before the
+ * sign-out still reaches its mint, so the mint reads the session's sign-out marker first.
+ */
+describe('AuthService, a mint in a signed-out session', () => {
+	const phone = { sessionId: 'phone', sessionStartedAt: '2026-11-12T07:30:00.000Z' };
+
+	it('is refused for an organization switch from that session', async () => {
+		const { service, accessPayloads, refreshPayloads, signedOut } = buildAuthService();
+		signedOut.add('phone');
+		inRequest({ userId: USER, claims: phone });
+
+		await expect(service.getJwtAccessToken(user, ORG)).rejects.toThrow(UnauthorizedException);
+		await expect(service.getJwtRefreshToken(user, ORG)).rejects.toThrow(UnauthorizedException);
+
+		expect(accessPayloads).toEqual([]);
+		expect(refreshPayloads).toEqual([]);
+	});
+
+	it('is refused for a refresh of that session', async () => {
+		const { service, accessPayloads, signedOut } = buildAuthService();
+		signedOut.add('phone');
+		inRequest({ userId: USER });
+
+		await expect(service.rotateTokens(sign({ id: USER, ...phone }, 'k'))).rejects.toThrow(UnauthorizedException);
+
+		expect(accessPayloads).toEqual([]);
+		expect((service as any).refreshTokenService.rotate).not.toHaveBeenCalled();
+	});
+
+	it('is let through for a session still signed in', async () => {
+		const { service, accessPayloads, signedOut } = buildAuthService();
+		signedOut.add('laptop');
+		inRequest({ userId: USER, claims: phone });
+
+		await service.getJwtAccessToken(user, ORG);
+
+		expect(accessPayloads[0].sessionId).toBe('phone');
+	});
+
+	it('reads no marker for a session the request starts: a sign-in, or a refresh of an older token', async () => {
+		const { service } = buildAuthService();
+		inRequest({ userId: null });
+		await Promise.all([service.getJwtAccessToken(user, ORG), service.getJwtRefreshToken(user, ORG)]);
+		inRequest({ userId: USER });
+		await service.rotateTokens(sign({ id: USER }, 'k'));
+
+		expect((service as any).accessTokenService.isSessionSignedOut).not.toHaveBeenCalled();
 	});
 });

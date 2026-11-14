@@ -144,7 +144,8 @@ import {
 import {
 	IUserSessionClaims,
 	keepSessionForRequest,
-	sessionClaimsForMint,
+	readSessionClaims,
+	sessionForMint,
 	sessionOfRefreshToken
 } from './user-session/user-session-claims';
 
@@ -2227,6 +2228,8 @@ export class AuthService extends SocialAuthService {
 				throw new UnauthorizedException();
 			}
 
+			const sessionClaims = await this.firstPartySessionClaims(userId, metadata);
+
 			// Create a payload for the JWT token
 			const payload: JwtPayload = {
 				id: user.id,
@@ -2245,7 +2248,7 @@ export class AuthService extends SocialAuthService {
 					: {}),
 				ipAddress: RequestContext.currentIp(),
 				userAgent: RequestContext.currentUserAgent(),
-				...this.firstPartySessionClaims(userId, metadata),
+				...sessionClaims,
 				...(metadata?.clientId && { clientId: metadata.clientId }),
 				// Only the OAuth-app code exchange passes it: the client and scopes the user approved (oauth-app-scope.ts).
 				...(metadata?.oauthApp && { oauthApp: metadata.oauthApp }),
@@ -2285,6 +2288,8 @@ export class AuthService extends SocialAuthService {
 				throw new Error('User ID or email is missing.');
 			}
 
+			const sessionClaims = await this.liveSessionClaims(user.id);
+
 			// Construct the JWT payload with organization context
 			const payload = {
 				id: user.id,
@@ -2294,7 +2299,7 @@ export class AuthService extends SocialAuthService {
 				role: user.role ? user.role.name : null,
 				ipAddress: RequestContext.currentIp(),
 				userAgent: RequestContext.currentUserAgent(),
-				...sessionClaimsForMint(user.id),
+				...sessionClaims,
 				...(metadata?.clientId && { clientId: metadata.clientId })
 			};
 
@@ -2330,6 +2335,8 @@ export class AuthService extends SocialAuthService {
 				throw new Error('User ID or email is missing.');
 			}
 
+			const sessionClaims = await this.liveSessionClaims(user.id);
+
 			// Construct the JWT payload with organization context
 			const payload = {
 				id: user.id,
@@ -2339,7 +2346,7 @@ export class AuthService extends SocialAuthService {
 				role: user.role ? user.role.name : null,
 				ipAddress: RequestContext.currentIp(),
 				userAgent: RequestContext.currentUserAgent(),
-				...sessionClaimsForMint(user.id),
+				...sessionClaims,
 				...(metadata?.clientId && { clientId: metadata.clientId })
 			};
 
@@ -2419,8 +2426,11 @@ export class AuthService extends SocialAuthService {
 			// keeps the organization it works in; otherwise the stored one (see `resolveRefreshOrganizationId`).
 			const organizationId = await this.resolveRefreshOrganizationId(user);
 
-			// The new tokens stay in the session of the refresh token they replace (already verified by the guard).
-			keepSessionForRequest(user.id, sessionOfRefreshToken(decode(token)));
+			// The new tokens stay in the session of the refresh token they replace (already verified by the guard). A
+			// refresh token minted before sessions were named starts one here: a session no sign-out can have named yet.
+			const refreshPayload = decode(token);
+			const isNamedSession = readSessionClaims(refreshPayload) !== null;
+			keepSessionForRequest(user.id, sessionOfRefreshToken(refreshPayload), isNamedSession);
 
 			// Get and return the JWT access token for the user with organization context
 			// Generate the access token first (non-destructive). Only rotate the refresh token after
@@ -2456,12 +2466,39 @@ export class AuthService extends SocialAuthService {
 	 * @param metadata The metadata the token is minted with.
 	 * @returns The claims to write into the token.
 	 */
-	private firstPartySessionClaims(userId: ID, metadata?: IAccessTokenMetadata): Partial<IUserSessionClaims> {
+	private async firstPartySessionClaims(
+		userId: ID,
+		metadata?: IAccessTokenMetadata
+	): Promise<Partial<IUserSessionClaims>> {
 		const isDelegated = !!metadata?.apiTokenId || !!metadata?.oauthApp;
 		if (isDelegated) {
 			return {};
 		}
-		return sessionClaimsForMint(userId);
+		return this.liveSessionClaims(userId);
+	}
+
+	/**
+	 * The session claims of a token minted now for `userId` (see `sessionForMint`), refused for a session its user signed
+	 * out (ever-co/ever-gauzy#11921). A request authenticated just before the sign-out (an organization or workspace
+	 * switch, a refresh) still reaches this mint; reading the sign-out marker here keeps it from minting a token in the
+	 * signed-out session after the sign-out's last read of the session's tokens. A session this request starts is new,
+	 * and is not read.
+	 *
+	 * @param userId The user the token is for.
+	 * @returns The claims to write into the token.
+	 * @throws UnauthorizedException when the session was signed out.
+	 */
+	private async liveSessionClaims(userId: ID): Promise<IUserSessionClaims> {
+		const { claims, inherited } = sessionForMint(userId);
+		if (!inherited) {
+			return claims;
+		}
+		const isSignedOut = await this.accessTokenService.isSessionSignedOut(userId, claims.sessionId);
+		if (isSignedOut) {
+			this.logger.warn(`Token refused: session ${claims.sessionId} of user ${userId} was signed out`);
+			throw new UnauthorizedException();
+		}
+		return claims;
 	}
 
 	/**

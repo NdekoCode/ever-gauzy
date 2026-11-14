@@ -5,7 +5,7 @@ import {
 	currentRequestSessionClaims,
 	keepSessionForRequest,
 	readSessionClaims,
-	sessionClaimsForMint,
+	sessionForMint,
 	sessionOfRefreshToken
 } from './user-session-claims';
 
@@ -39,13 +39,13 @@ describe('readSessionClaims', () => {
 	});
 });
 
-describe('sessionClaimsForMint', () => {
+describe('sessionForMint', () => {
 	it('gives the access and the refresh token of one sign-in the same new session', () => {
 		inRequest({ userId: null });
 		const now = new Date('2026-11-14T09:00:00.000Z');
 
-		const access = sessionClaimsForMint(MARIE, now);
-		const refresh = sessionClaimsForMint(MARIE, now);
+		const access = sessionForMint(MARIE, now).claims;
+		const refresh = sessionForMint(MARIE, now).claims;
 
 		expect(access.sessionId).toMatch(/^[0-9a-f-]{36}$/);
 		expect(refresh).toEqual(access);
@@ -54,9 +54,9 @@ describe('sessionClaimsForMint', () => {
 
 	it('starts a new session for each sign-in request', () => {
 		inRequest({ userId: null });
-		const first = sessionClaimsForMint(MARIE);
+		const first = sessionForMint(MARIE).claims;
 		inRequest({ userId: null });
-		const second = sessionClaimsForMint(MARIE);
+		const second = sessionForMint(MARIE).claims;
 
 		expect(second.sessionId).not.toBe(first.sessionId);
 	});
@@ -64,7 +64,7 @@ describe('sessionClaimsForMint', () => {
 	it('keeps the session of the request when the user switches organization or workspace', () => {
 		inRequest({ userId: MARIE, claims: { sessionId: 'laptop', sessionStartedAt: '2026-11-10T08:00:00.000Z' } });
 
-		expect(sessionClaimsForMint(MARIE)).toEqual({
+		expect(sessionForMint(MARIE).claims).toEqual({
 			sessionId: 'laptop',
 			sessionStartedAt: '2026-11-10T08:00:00.000Z'
 		});
@@ -73,14 +73,14 @@ describe('sessionClaimsForMint', () => {
 	it("never gives another user's token the session of the request", () => {
 		inRequest({ userId: MARIE, claims: { sessionId: 'laptop', sessionStartedAt: '2026-11-10T08:00:00.000Z' } });
 
-		expect(sessionClaimsForMint(PAUL).sessionId).not.toBe('laptop');
+		expect(sessionForMint(PAUL).claims.sessionId).not.toBe('laptop');
 	});
 
 	it('keeps the session a refresh chose for the user', () => {
 		inRequest({ userId: MARIE, claims: { sessionId: 'old-access', sessionStartedAt: '2026-11-01T00:00:00.000Z' } });
 		keepSessionForRequest(MARIE, { sessionId: 'phone', sessionStartedAt: '2026-11-12T07:30:00.000Z' });
 
-		expect(sessionClaimsForMint(MARIE)).toEqual({
+		expect(sessionForMint(MARIE).claims).toEqual({
 			sessionId: 'phone',
 			sessionStartedAt: '2026-11-12T07:30:00.000Z'
 		});
@@ -91,10 +91,38 @@ describe('sessionClaimsForMint', () => {
 		jest.spyOn(RequestContext, 'currentUserId').mockReturnValue(null);
 		jest.spyOn(RequestContext, 'currentToken').mockReturnValue(null);
 
-		const first = sessionClaimsForMint(MARIE);
-		const second = sessionClaimsForMint(MARIE);
+		const first = sessionForMint(MARIE).claims;
+		const second = sessionForMint(MARIE).claims;
 
 		expect(second.sessionId).not.toBe(first.sessionId);
+	});
+
+	/** Only a session that existed before the request can have been signed out: only its mint asks (`AuthService`). */
+	describe('whether the session existed before the request', () => {
+		const laptop = { sessionId: 'laptop', sessionStartedAt: '2026-11-10T08:00:00.000Z' };
+
+		it('says no for the session a sign-in starts', () => {
+			inRequest({ userId: null });
+
+			expect(sessionForMint(MARIE).inherited).toBe(false);
+			expect(sessionForMint(MARIE).inherited).toBe(false);
+		});
+
+		it('says yes for the session of the request', () => {
+			inRequest({ userId: MARIE, claims: laptop });
+
+			expect(sessionForMint(MARIE)).toEqual({ claims: laptop, inherited: true });
+		});
+
+		it('says yes for the session of a refresh token, and no for one a refresh starts for an old token', () => {
+			inRequest({ userId: MARIE });
+			keepSessionForRequest(MARIE, laptop);
+			expect(sessionForMint(MARIE).inherited).toBe(true);
+
+			inRequest({ userId: MARIE });
+			keepSessionForRequest(MARIE, laptop, false);
+			expect(sessionForMint(MARIE).inherited).toBe(false);
+		});
 	});
 });
 

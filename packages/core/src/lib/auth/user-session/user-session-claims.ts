@@ -20,6 +20,15 @@ export interface IUserSessionClaims {
 	sessionStartedAt: string;
 }
 
+/**
+ * The session a token is minted in, and whether that session existed before the request (`inherited`): only such a
+ * session can have been signed out, so only a mint in it asks whether it was (`AuthService`).
+ */
+export interface IMintedSession {
+	claims: IUserSessionClaims;
+	inherited: boolean;
+}
+
 /** Where a request keeps the session of each user it mints tokens for. */
 const SESSIONS_OF_REQUEST = Symbol('userSessionsOfRequest');
 
@@ -64,13 +73,13 @@ export function currentRequestSessionClaims(): IUserSessionClaims | null {
 }
 
 /** The sessions the current request chose, by user; null outside a request. */
-function sessionsOfRequest(): Map<string, IUserSessionClaims> | null {
+function sessionsOfRequest(): Map<string, IMintedSession> | null {
 	const request = RequestContext.currentRequest();
 	if (!request) {
 		return null;
 	}
 	if (!request[SESSIONS_OF_REQUEST]) {
-		request[SESSIONS_OF_REQUEST] = new Map<string, IUserSessionClaims>();
+		request[SESSIONS_OF_REQUEST] = new Map<string, IMintedSession>();
 	}
 	return request[SESSIONS_OF_REQUEST];
 }
@@ -81,34 +90,39 @@ function sessionsOfRequest(): Map<string, IUserSessionClaims> | null {
  *
  * @param userId The user the tokens are for.
  * @param claims The session they belong to.
+ * @param inherited Whether the session existed before this request (false for one just started for an old token).
  */
-export function keepSessionForRequest(userId: string, claims: IUserSessionClaims): void {
-	sessionsOfRequest()?.set(userId, claims);
+export function keepSessionForRequest(userId: string, claims: IUserSessionClaims, inherited = true): void {
+	sessionsOfRequest()?.set(userId, { claims, inherited });
 }
 
 /**
- * The session claims of a token minted now for `userId`:
+ * The session of a token minted now for `userId`:
  *
  * - the session the current request already chose for that user: the access and refresh tokens of one sign-in share
  *   it, and a refresh keeps the session of the refresh token it was given (`keepSessionForRequest`);
  * - otherwise the session of the request itself, when the request is made by that same user: an organization or
  *   workspace switch keeps the session of the device it is made from;
- * - otherwise a new session, starting now.
+ * - otherwise a new session, starting now: the only one not inherited.
  *
  * @param userId The user the token is for.
  * @param now The time a new session starts at.
- * @returns The claims to write into the token.
+ * @returns The claims to write into the token, and whether the session is inherited.
  */
-export function sessionClaimsForMint(userId: string, now: Date = new Date()): IUserSessionClaims {
+export function sessionForMint(userId: string, now: Date = new Date()): IMintedSession {
 	const sessions = sessionsOfRequest();
 	const chosen = sessions?.get(userId);
 	if (chosen) {
 		return chosen;
 	}
 
-	const claims = requestSessionOf(userId) ?? { sessionId: randomUUID(), sessionStartedAt: now.toISOString() };
-	sessions?.set(userId, claims);
-	return claims;
+	const requestSession = requestSessionOf(userId);
+	let minted: IMintedSession = { claims: requestSession, inherited: true };
+	if (!requestSession) {
+		minted = { claims: { sessionId: randomUUID(), sessionStartedAt: now.toISOString() }, inherited: false };
+	}
+	sessions?.set(userId, minted);
+	return minted;
 }
 
 /** The session of the current request when the request is made by `userId`; null otherwise. */
