@@ -22,7 +22,8 @@ import {
 	FindOptionsRelations,
 	FindOptionsWhere,
 	Or,
-	Equal
+	Equal,
+	EntityManager
 } from 'typeorm';
 import * as moment from 'moment';
 import {
@@ -77,7 +78,6 @@ import {
 	UpdateEmployeeTotalWorkedHoursCommand
 } from '../time-log/commands';
 import { TimesheetRecalculateCommand } from '../timesheet/commands';
-import { TimeSlotBulkCreateCommand } from '../time-slot/commands/time-slot-bulk-create.command';
 import { generateTimeSlots } from '../time-slot/utils';
 import {
 	assertRequiredContext,
@@ -109,6 +109,7 @@ import {
 import {
 	StartMoveRefusal,
 	TIMER_NOT_RUNNING,
+	TIMER_START_CHANGED,
 	TIMER_START_OVERLAP,
 	movesStartEarlier,
 	startMoveRefusal
@@ -750,9 +751,12 @@ export class TimerService {
 		const runningSince = moment.utc(runningLog.startedAt);
 		const keepsItsStart = runningSince.isSame(requestedStart);
 		if (keepsItsStart) {
-			// A retry of a move whose slot work failed finds the start already moved: it completes that work
+			// A retry of a move whose slot work or recalculation failed finds the start already moved: it completes them
 			const run = await this.typeOrmTimeLogRepository.findOneBy({ id: runningLog.id, tenantId });
-			await this.coverRunFromItsStart(run ?? runningLog, now);
+			if (run) {
+				await this.coverRunFromItsStart(run, now);
+				await this.recalculateRun(run);
+			}
 			return runningLog;
 		}
 
@@ -763,6 +767,10 @@ export class TimerService {
 
 		// The run as it is before the move, for the time log update below to tell which of its slots the move releases
 		const before = await this.typeOrmTimeLogRepository.findOneBy({ id: runningLog.id, tenantId });
+		const checkedStartStillStored = Boolean(before) && runningSince.isSame(before.startedAt);
+		if (!checkedStartStillStored) {
+			throw await this.moveRefusedMeanwhile(runningLog.id, tenantId);
+		}
 
 		// A running log's end is the last moment its run was known to go on: the start of a web timer run, the time of
 		// a heartbeat. A start moved past it takes now as its end, as a heartbeat would, so the log never ends before it
@@ -776,29 +784,67 @@ export class TimerService {
 			...(reason ? { reason } : {})
 		};
 
-		// The move is written only while the run still runs: a stop that landed since the read above keeps its end, and
-		// nothing moves.
+		// The move is written only while the run still runs from the start it was checked against: a stop that landed
+		// since keeps its end, another move's start is checked again, and nothing moves.
 		const written = await this.typeOrmTimeLogRepository.update(
-			{ id: runningLog.id, tenantId, isRunning: true },
+			{ id: runningLog.id, tenantId, isRunning: true, startedAt: before.startedAt },
 			{ ...changes, ...(startsAfterKnownEnd ? { stoppedAt: now } : {}) }
 		);
-		const stoppedMeanwhile = !before || !written.affected;
-		if (stoppedMeanwhile) {
-			throw new BadRequestException({
-				message: 'The timer stopped before its start could move. Nothing was changed.',
-				code: TIMER_NOT_RUNNING
-			});
+		if (!written.affected) {
+			throw await this.moveRefusedMeanwhile(runningLog.id, tenantId);
 		}
 
 		// The time log update files the run under the timesheet of its new start and releases the slots before a later
 		// start, with their screenshots and activity. It reads the run as it was, known to run until now, and makes no slot
 		// of its own (`manualTimeSlot`): a run whose stop gives it the slots of its whole range must keep having none.
+		const leftTimesheetId = before.timesheetId;
 		const knownRun = Object.assign(before, { stoppedAt: now });
 		const moved: ITimeLog = await this._commandBus.execute(new TimeLogUpdateCommand(changes, knownRun, true));
 
-		await this.coverRunFromItsStart(moved, now);
+		// The update recalculated the timesheet the run is now under, not the one a start moved to another week left
+		const leavesTimesheet = Boolean(leftTimesheetId) && leftTimesheetId !== moved.timesheetId;
+		const slotsChanged = await this.coverRunFromItsStart(moved, now);
+		const totalsChanged = slotsChanged || leavesTimesheet;
+		if (totalsChanged) {
+			await this.recalculateRun(moved, leftTimesheetId);
+		}
 
 		return moved;
+	}
+
+	/**
+	 * Why a checked move found its run changed when it was written: stopped since (400, as with nothing running), or
+	 * its start moved by another call (409: the move is checked again from that start).
+	 *
+	 * @param timeLogId - The run.
+	 * @param tenantId - The caller's tenant.
+	 */
+	private async moveRefusedMeanwhile(timeLogId: ID, tenantId: ID): Promise<HttpException> {
+		const run = await this.typeOrmTimeLogRepository.findOneBy({ id: timeLogId, tenantId });
+		if (!run?.isRunning) {
+			return new BadRequestException({
+				message: 'The timer stopped before its start could move. Nothing was changed.',
+				code: TIMER_NOT_RUNNING
+			});
+		}
+		return new ConflictException({
+			message: 'The start of the timer changed while this move was checked. Nothing was changed: try again.',
+			code: TIMER_START_CHANGED
+		});
+	}
+
+	/**
+	 * Recalculates the timesheet a run is under, the one it left when given, and the employee's worked hours.
+	 *
+	 * @param run - The run, as stored.
+	 * @param leftTimesheetId - The timesheet the run left, if any.
+	 */
+	private async recalculateRun(run: ITimeLog, leftTimesheetId?: ID): Promise<void> {
+		const timesheetIds = new Set([run.timesheetId, leftTimesheetId].filter(Boolean));
+		for (const timesheetId of timesheetIds) {
+			await this._commandBus.execute(new TimesheetRecalculateCommand(timesheetId));
+		}
+		await this._commandBus.execute(new UpdateEmployeeTotalWorkedHoursCommand(run.employeeId));
 	}
 
 	/** A super admin, where the installation lets that role bypass the organization's time policy. */
@@ -848,21 +894,22 @@ export class TimerService {
 	 * earlier start's added minutes count in the slots, and so in the timesheet, as in the run's duration.
 	 *
 	 * A run holding no slot is left as it is: its stop gives it the slots of its whole range, which a slot made here
-	 * would prevent. Every write is idempotent (a slot is reused, a duration only ever raised), so a retry of a move
-	 * whose slot work failed completes it.
+	 * would prevent. The writes run in one transaction and are idempotent (a slot is reused, a duration only ever
+	 * raised): a failure leaves the slots as they were, and a retry of the move finds the same work to do.
 	 *
 	 * @param run - The running log, as stored.
 	 * @param now - The moment of the move: the run covers its past up to it.
+	 * @returns Whether a slot changed, so the caller recalculates the totals.
 	 */
-	private async coverRunFromItsStart(run: ITimeLog, now: Date): Promise<void> {
-		const { id: timeLogId, employeeId, organizationId, tenantId } = run;
-		const slotsOfRun = this.typeOrmTimeLogRepository.manager
+	private async coverRunFromItsStart(run: ITimeLog, now: Date): Promise<boolean> {
+		const { id: timeLogId } = run;
+		const held: ITimeSlot[] = await this.typeOrmTimeLogRepository.manager
 			.createQueryBuilder()
 			.relation(TimeLog, 'timeSlots')
-			.of(timeLogId);
-		const held: ITimeSlot[] = await slotsOfRun.loadMany();
+			.of(timeLogId)
+			.loadMany();
 		if (held.length === 0) {
-			return;
+			return false;
 		}
 
 		const windowOf = (slot: Pick<ITimeSlot, 'startedAt'>): number =>
@@ -873,18 +920,7 @@ export class TimerService {
 		);
 		const heldByWindow = new Map(held.map((slot) => [windowOf(slot), slot]));
 
-		const missing = coverage
-			.filter((window) => !heldByWindow.has(windowOf(window)))
-			.map((window) => ({
-				...window,
-				employeeId,
-				organizationId,
-				tenantId,
-				keyboard: 0,
-				mouse: 0,
-				overall: 0,
-				timeLogId
-			}));
+		const missing = coverage.filter((window) => !heldByWindow.has(windowOf(window)));
 		const short = coverage
 			.map((window) => ({ slot: heldByWindow.get(windowOf(window)), seconds: window.duration }))
 			.filter((entry): entry is { slot: ITimeSlot; seconds: number } => {
@@ -893,34 +929,56 @@ export class TimerService {
 			});
 		const changesSlots = missing.length > 0 || short.length > 0;
 		if (!changesSlots) {
-			return;
+			return false;
 		}
 
-		if (missing.length > 0) {
-			const made: ITimeSlot[] = await this._commandBus.execute(
-				new TimeSlotBulkCreateCommand(missing, employeeId, organizationId, tenantId)
-			);
-			// The bulk create links the slots it creates; one it found already there (a neighbour's) is linked here
-			const linkedIds = new Set((await slotsOfRun.loadMany()).map((slot: ITimeSlot) => slot.id));
-			const missingWindows = new Set(missing.map(windowOf));
-			const toLink = (made ?? [])
-				.filter((slot) => missingWindows.has(windowOf(slot)))
-				.filter((slot) => !linkedIds.has(slot.id))
-				.map((slot) => slot.id);
-			if (toLink.length > 0) {
-				await slotsOfRun.add(toLink);
+		await this.typeOrmTimeLogRepository.manager.transaction(async (manager: EntityManager) => {
+			for (const { slot, seconds } of short) {
+				await manager.update(TimeSlot, { id: slot.id }, { duration: seconds });
 			}
+			for (const window of missing) {
+				const slotId = await this.slotOfWindow(manager, run, window);
+				await manager.createQueryBuilder().relation(TimeLog, 'timeSlots').of(timeLogId).add(slotId);
+			}
+		});
+		return true;
+	}
+
+	/**
+	 * The employee's slot that starts a ten-minute window, created without activity for the seconds the run covers in
+	 * it when there is none. A slot already there (the neighbouring entry's, in the window both share) is reused.
+	 *
+	 * @param manager - The transaction's entity manager.
+	 * @param run - The run the window belongs to.
+	 * @param window - The window, with the seconds the run covers in it.
+	 * @returns The slot's id.
+	 */
+	private async slotOfWindow(
+		manager: EntityManager,
+		run: ITimeLog,
+		window: { startedAt: Date; duration: number }
+	): Promise<ID> {
+		const { employeeId, organizationId, tenantId } = run;
+		const windowStart = moment.utc(window.startedAt).startOf('minute');
+		const { start: startedAt } = getDateRangeFormat(windowStart, windowStart);
+		const where = { tenantId, organizationId, employeeId, startedAt } as FindOptionsWhere<TimeSlot>;
+		const existing = await manager.findOne(TimeSlot, { where });
+		if (existing) {
+			return existing.id;
 		}
 
-		for (const { slot, seconds } of short) {
-			await this.typeOrmTimeLogRepository.manager.update(TimeSlot, { id: slot.id }, { duration: seconds });
-		}
-
-		// The time log update recalculated the timesheet and the worked hours before these slots changed
-		if (run.timesheetId) {
-			await this._commandBus.execute(new TimesheetRecalculateCommand(run.timesheetId));
-		}
-		await this._commandBus.execute(new UpdateEmployeeTotalWorkedHoursCommand(employeeId));
+		const slot = manager.create(TimeSlot, {
+			tenantId,
+			organizationId,
+			employeeId,
+			startedAt: startedAt as Date,
+			duration: window.duration,
+			keyboard: 0,
+			mouse: 0,
+			overall: 0
+		});
+		const created = await manager.save(slot);
+		return created.id;
 	}
 
 	/**

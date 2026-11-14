@@ -27,6 +27,9 @@ export const TIMER_START_REASON_TOO_LONG = 'TIMER_START_REASON_TOO_LONG';
 /** An earlier start overlaps another time entry of the same member. */
 export const TIMER_START_OVERLAP = 'TIMER_START_OVERLAP';
 
+/** Another call moved the run's start after this move was checked: the move is checked again from the new start. */
+export const TIMER_START_CHANGED = 'TIMER_START_CHANGED';
+
 /** The longest reason a time log keeps: its `reason` column is a 255-character string on MySQL. */
 export const TIMER_START_REASON_MAX_LENGTH = 255;
 
