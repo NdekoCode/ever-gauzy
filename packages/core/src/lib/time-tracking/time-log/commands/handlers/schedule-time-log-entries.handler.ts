@@ -53,13 +53,13 @@ export class ScheduleTimeLogEntriesHandler implements ICommandHandler<ScheduleTi
 	 * updating durations, and correcting the 'stoppedAt' timestamps based on the employee's activities.
 	 *
 	 * @param command The command containing the details needed to identify the pending TimeLog entries:
-	 *                `employeeId`, `organizationId` and `tenantId`, all three required.
+	 *                `employeeId`, `organizationId` and `tenantId`, all three required, and optionally `timeLogIds`.
 	 *
 	 * @returns A Promise that resolves when all pending TimeLog entries have been processed and updated.
 	 * @throws Error when one of the three ids is missing; nothing is closed then.
 	 */
 	public async execute(command: ScheduleTimeLogEntriesCommand): Promise<void> {
-		const { tenantId, organizationId, employeeId, replacedAt } = command;
+		const { tenantId, organizationId, employeeId, timeLogIds, replacedAt } = command;
 
 		// One employee's entries only. The query below keeps its employee, organization and tenant filters only when
 		// the employee and organization ids are set: without them it would close the pending entries of every employee
@@ -72,7 +72,12 @@ export class ScheduleTimeLogEntriesHandler implements ICommandHandler<ScheduleTi
 		}
 
 		// Retrieve all pending TimeLog entries of the employee, in their tenant and organization
-		const logs = await this.getPendingTimeLogs(tenantId, organizationId, employeeId);
+		const pendingLogs = await this.getPendingTimeLogs(tenantId, organizationId, employeeId);
+
+		// Only the running logs the command names, when it names some: after a stop, a run started meanwhile is not
+		// among them. A log stored stopped without an end is never a run another client started, and still gets one
+		const isNamedOrNotRunning = (log: ITimeLog) => !log.isRunning || timeLogIds.includes(log.id);
+		const logs = timeLogIds ? pendingLogs.filter(isNamedOrNotRunning) : pendingLogs;
 
 		// Iterate through each pending time log entry to process and update them as necessary
 		for await (const log of logs) {
@@ -118,10 +123,9 @@ export class ScheduleTimeLogEntriesHandler implements ICommandHandler<ScheduleTi
 
 				// Re-fetch as entities with timeSlots populated (matching TypeORM's relations: { timeSlots: true })
 				const ids = results.map((r: any) => r.id);
-				return await this.mikroOrmTimeLogRepository.find(
-					{ id: { $in: ids } } as any,
-					{ populate: ['timeSlots'] as any }
-				);
+				return await this.mikroOrmTimeLogRepository.find({ id: { $in: ids } } as any, {
+					populate: ['timeSlots'] as any
+				});
 			}
 			case MultiORMEnum.TypeORM:
 			default: {

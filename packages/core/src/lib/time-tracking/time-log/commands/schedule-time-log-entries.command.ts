@@ -4,11 +4,21 @@ import { ID } from '@gauzy/contracts';
 export class ScheduleTimeLogEntriesCommand implements ICommand {
 	static readonly type = 'Adjust [TimeLog] Entries';
 
+	/**
+	 * @param employeeId The employee whose pending logs are processed. Required: the handler refuses a command without
+	 *                   it, or without the organization or tenant id, rather than close every employee's pending logs.
+	 * @param organizationId The employee's organization. Required.
+	 * @param tenantId The employee's tenant. Required.
+	 * @param timeLogIds Only the running pending logs among these, when given: the runs the start or stop read. A log
+	 *                   stored stopped without an end is still given one.
+	 * @param replacedAt The start of the run that replaces the pending entries, if a start closes them: a running break
+	 *                   ends there.
+	 */
 	constructor(
 		public readonly employeeId?: ID,
 		public readonly organizationId?: ID,
 		public readonly tenantId?: ID,
-		/** The start of the run that replaces the pending entries, if a start closes them: a running break ends there. */
+		public readonly timeLogIds?: ID[],
 		public readonly replacedAt?: Date
 	) {}
 }

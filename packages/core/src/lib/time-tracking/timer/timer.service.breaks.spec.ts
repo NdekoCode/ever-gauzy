@@ -34,6 +34,10 @@ describe('TimerService and breaks', () => {
 			logger: { warn: jest.fn(), debug: jest.fn(), log: jest.fn() },
 			findEmployee: jest.fn(async () => ({ id: 'employee-1', organizationId: 'organization-1' })),
 			getLastRunningLog: jest.fn(async () => log),
+			// What the stop reads besides the run: the runs going, the logs it overlaps, then the tracking status it writes
+			getLastRunningLogs: jest.fn(async () => [log]),
+			findOverlappingLogIds: jest.fn(async () => ['older-entry']),
+			markNotTrackingAfterStop: jest.fn(async () => undefined),
 			assertStopIsForRunningLog: jest.fn(),
 			_commandBus: { execute: jest.fn(async () => ({ ...log, isRunning: false, stoppedAt: new Date() })) },
 			_employeeService: { update: jest.fn() },
