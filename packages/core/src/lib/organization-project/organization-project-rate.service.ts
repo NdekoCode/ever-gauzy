@@ -15,6 +15,7 @@ import { OrganizationProject } from './organization-project.entity';
 import { TypeOrmOrganizationProjectRepository } from './repository/type-orm-organization-project.repository';
 import { TypeOrmOrganizationProjectEmployeeRepository } from './repository/type-orm-organization-project-employee.repository';
 import {
+	keepsTimeLogRates,
 	RepricedTime,
 	repriceMemberProjectTime,
 	repriceProjectTime
@@ -73,27 +74,45 @@ export class OrganizationProjectRateService {
 		const currency = await this.ratesCurrencyOf(project, organizationId, tenantId);
 		const where = { id: project.id, organizationId, tenantId };
 
-		if (!input.applyFrom) {
+		const time = await this.repricedTimeOf(input, tenantId);
+		if (!time) {
 			await this.typeOrmOrganizationProjectRepository.update(where, { billRateValue });
 			return { id: project.id, billRateValue, currency };
 		}
 		// The time logs store the currency the rate is in, as they are recorded with
 		const repricedTimeLogs = await this.inOneTransaction(async (manager) => {
 			await manager.update(OrganizationProject, where, { billRateValue });
-			const time = this.repricedTimeOf(input, tenantId);
 			return await repriceProjectTime(manager, time, project.id, { billRateValue, currency });
 		});
 		return { id: project.id, billRateValue, currency, repricedTimeLogs };
 	}
 
-	/** The time a dated rate change re-prices: the organization's time logs started on or after its day. */
-	private repricedTimeOf(input: IOrganizationProjectRateUpdateInput, tenantId: ID): RepricedTime {
-		return { tenantId, organizationId: input.organizationId, from: new Date(input.applyFrom) };
+	/**
+	 * The time a client rate change re-prices: with a day, the organization's time logs started on or after it. Without
+	 * one, all the time already tracked, as before time logs stored their rates, unless the organization's time logs
+	 * keep their rates: then none (null), and only time recorded from then on takes the new rate.
+	 */
+	private async repricedTimeOf(
+		input: IOrganizationProjectRateUpdateInput,
+		tenantId: ID
+	): Promise<RepricedTime | null> {
+		const organization = { tenantId, organizationId: input.organizationId };
+		if (input.applyFrom) {
+			return { ...organization, from: new Date(input.applyFrom) };
+		}
+		const keepsTheirRates = await keepsTimeLogRates(
+			this.typeOrmOrganizationProjectRepository.manager,
+			organization
+		);
+		if (keepsTheirRates) {
+			return null;
+		}
+		return { ...organization, from: null };
 	}
 
 	/**
-	 * Writes a dated rate change and the time it re-prices in one transaction (see time-log-repricing.ts): a failed
-	 * re-pricing leaves the previous rate, and two dated changes of the same rate run one after the other on its row.
+	 * Writes a rate change and the time it re-prices in one transaction (see time-log-repricing.ts): a failed
+	 * re-pricing leaves the previous rate, and two changes of the same rate run one after the other on its row.
 	 */
 	private async inOneTransaction(work: (manager: EntityManager) => Promise<number>): Promise<number> {
 		return await this.typeOrmOrganizationProjectRepository.manager.transaction(work);
@@ -125,7 +144,8 @@ export class OrganizationProjectRateService {
 		}
 
 		const where = { id: membership.id, tenantId };
-		if (!input.applyFrom) {
+		const time = await this.repricedTimeOf(input, tenantId);
+		if (!time) {
 			await this.typeOrmOrganizationProjectEmployeeRepository.update(where, { billRateValue });
 			return { organizationProjectId: projectId, employeeId, billRateValue };
 		}
@@ -133,7 +153,6 @@ export class OrganizationProjectRateService {
 		const currency = await this.ratesCurrencyOf(project, organizationId, tenantId);
 		const repricedTimeLogs = await this.inOneTransaction(async (manager) => {
 			await manager.update(OrganizationProjectEmployee, where, { billRateValue });
-			const time = this.repricedTimeOf(input, tenantId);
 			return await repriceMemberProjectTime(manager, time, projectId, employeeId, { billRateValue, currency });
 		});
 		return { organizationProjectId: projectId, employeeId, billRateValue, repricedTimeLogs };

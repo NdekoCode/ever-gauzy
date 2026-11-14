@@ -25,7 +25,14 @@ describe('EmployeeController and the pay rate', () => {
 		assertOwnPayRateUnchanged = jest.fn().mockResolvedValue(undefined);
 		execute = jest.fn().mockResolvedValue({ id: 'employee-1' });
 		controller = new EmployeeController(
-			{ findAll, pagination, countBy, assertOwnPayRateUnchanged } as never,
+			{
+				findAll,
+				pagination,
+				countBy,
+				assertOwnPayRateUnchanged,
+				ratesBeforeUpdate: jest.fn().mockResolvedValue(null),
+				repriceTimeFrom: jest.fn().mockResolvedValue(undefined)
+			} as never,
 			{ execute } as never,
 			{} as never,
 			{} as never

@@ -257,4 +257,44 @@ describe('re-pricing time from a day', () => {
 		},
 		TIMEOUT
 	);
+
+	const allTime = { tenantId: TENANT, organizationId: ORGANIZATION, from: null };
+
+	it(
+		"gives all of Marie's time the new rate when the change names no day, invoiced time too, as reports priced it",
+		async () => {
+			const count = await repricing.repriceMemberTime(dataSource.manager, allTime, MARIE, { billRateValue: 50 });
+
+			expect(count).toBe(3);
+			for (const id of [LOG.september, LOG.october, LOG.invoiced]) {
+				expect(await ratesOf(id)).toMatchObject({
+					billRateValue: 50,
+					billRateCurrency: 'EUR',
+					payRateValue: 25
+				});
+			}
+			expect(await ratesOf(LOG.removed)).toMatchObject({ billRateValue: 40 });
+			expect(await ratesOf(LOG.unstored)).toMatchObject({ billRateValue: null, ratesStored: null });
+			expect(await ratesOf(LOG.paul)).toMatchObject({ billRateValue: 40 });
+		},
+		TIMEOUT
+	);
+
+	it(
+		"reads whether the organization's time logs keep their rates: not unless it turned it on",
+		async () => {
+			const scope = { tenantId: TENANT, organizationId: ORGANIZATION };
+			expect(await repricing.keepsTimeLogRates(dataSource.manager, scope)).toBe(false);
+
+			await dataSource.query(`UPDATE "organization" SET "timeLogsKeepTheirRates" = 0`);
+			expect(await repricing.keepsTimeLogRates(dataSource.manager, scope)).toBe(false);
+
+			await dataSource.query(`UPDATE "organization" SET "timeLogsKeepTheirRates" = 1`);
+			expect(await repricing.keepsTimeLogRates(dataSource.manager, scope)).toBe(true);
+			expect(
+				await repricing.keepsTimeLogRates(dataSource.manager, { ...scope, tenantId: OTHER_ORGANIZATION })
+			).toBe(false);
+		},
+		TIMEOUT
+	);
 });

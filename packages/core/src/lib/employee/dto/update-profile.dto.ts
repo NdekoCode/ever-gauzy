@@ -51,15 +51,17 @@ export class UpdateProfileDTO
 	readonly contact?: IContact;
 
 	/**
-	 * The day a billing or pay rate this update sets prices tracked time from. Without it only the time logs recorded
-	 * from now on take the new rate, and past time keeps its price.
+	 * The day a billing or pay rate this update sets prices tracked time from. Without it, all the time already
+	 * tracked takes the new rate, unless the organization's time logs keep their rates: then only time recorded from
+	 * now on takes it, and past time keeps its price.
 	 */
 	@ApiPropertyOptional({
 		type: () => String,
 		format: 'date-time',
 		description:
 			'Apply the rates this update sets to the time logs started on or after this day (time a live invoice ' +
-			'bills keeps its price). Without it, only time recorded from now on takes them.'
+			"bills keeps its price). Without it, all the time already tracked takes them, unless the organization's " +
+			'time logs keep their rates (timeLogsKeepTheirRates): then only time recorded from now on does.'
 	})
 	@IsOptional()
 	@IsDateString()

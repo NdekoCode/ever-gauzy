@@ -73,8 +73,9 @@ export class TimeLogCreateHandler implements ICommandHandler<TimeLogCreateComman
 			new TimesheetFirstOrCreateCommand(startedAt, employeeId, organizationId)
 		);
 
-		// The rates of the moment price the log from now on: a later rate change leaves them unless it names an earlier
-		// day to apply from (see time-log-rates.ts). Never taken from the input: a client names no price for its time.
+		// The rates of the moment price the log: a later rate change re-prices them as time-log-repricing.ts says (all
+		// past time, or from a day, or none when the organization's time logs keep their rates). Never taken from the
+		// input: a client names no price for its time.
 		const rates = await this._commandBus.execute(
 			new FindTimeLogRatesCommand({ tenantId, organizationId, employeeId, projectId: input.projectId ?? null })
 		);

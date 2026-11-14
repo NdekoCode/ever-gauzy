@@ -31,7 +31,8 @@ export class OrganizationProjectRateDTO
 		format: 'date-time',
 		description:
 			'Apply the new rate to the time logs started on or after this day (time a live invoice bills keeps its ' +
-			'price). Without it, only time recorded from now on takes it.'
+			"price). Without it, all the time already tracked takes it, unless the organization's time logs keep " +
+			'their rates (timeLogsKeepTheirRates): then only time recorded from now on does.'
 	})
 	@IsOptional()
 	@IsDateString()

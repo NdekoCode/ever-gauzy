@@ -140,7 +140,8 @@ export interface IOrganizationProjectRateUpdateInput extends IBasePerTenantAndOr
 	billRateValue: number | null;
 	/**
 	 * The day the new rate prices tracked time from: the time logs started on or after it take the new rate, except time
-	 * a live invoice bills. Without it only the time logs recorded from now on take it, and past time keeps its price.
+	 * a live invoice bills. Without it all the time already tracked takes it, unless the organization's time logs keep
+	 * their rates (`timeLogsKeepTheirRates`): then only the time logs recorded from now on take it.
 	 */
 	applyFrom?: Date | string;
 }

@@ -59,6 +59,7 @@ import {
 	EmployeeListQueryDTO
 } from './dto';
 import { withoutOwnPayRateWrite, withoutPayRateCriteria, withoutPayRateKeys } from './pay-rate';
+import { MemberRatesSent } from '../time-tracking/time-log/time-log-repricing';
 import { RespondsWithPayRate } from '../core/interceptors/employee-pay-rate-scrub';
 import { SensitiveRelations } from '../core/decorators/sensitive-relations.decorator';
 import { SensitiveRelationsInterceptor } from '../core/interceptors/sensitive-relations.interceptor';
@@ -469,24 +470,27 @@ export class EmployeeController extends CrudController<Employee> {
 			this._employeeService.assertMayRepriceTimeOf(id);
 		}
 		const changes = withoutOwnPayRateWrite(id, input);
+		const previous = await this._employeeService.ratesBeforeUpdate(id, changes);
 		const employee = await this._commandBus.execute(new EmployeeUpdateCommand(id, changes));
-		return await this.withRepricedTime(id, employee, changes, ratesApplyFrom);
+		return await this.withRepricedTime(id, employee, changes, ratesApplyFrom, previous);
 	}
 
 	/**
-	 * The updated employee, with how many time logs took its new rates when the update named a day to apply them
-	 * from (`repricedTimeLogs`). Without a day, past time keeps its price and the answer is the employee as before.
+	 * The updated employee, with how many time logs took its new rates (`repricedTimeLogs`) when the update re-priced
+	 * any: from the day it named, or, without one, all the time already tracked unless the organization's time logs
+	 * keep their rates (see EmployeeService.repriceTimeFrom). Otherwise the answer is the employee as before.
 	 */
 	private async withRepricedTime(
 		id: ID,
 		employee: IEmployee,
 		changes: IEmployeeUpdateInput,
-		ratesApplyFrom: string | undefined
+		ratesApplyFrom: string | undefined,
+		previous: MemberRatesSent | null
 	): Promise<IEmployee> {
-		if (!ratesApplyFrom) {
+		const repricedTimeLogs = await this._employeeService.repriceTimeFrom(id, changes, ratesApplyFrom, previous);
+		if (repricedTimeLogs === undefined) {
 			return employee;
 		}
-		const repricedTimeLogs = await this._employeeService.repriceTimeFrom(id, changes, ratesApplyFrom);
 		return Object.assign(employee, { repricedTimeLogs });
 	}
 
@@ -534,8 +538,9 @@ export class EmployeeController extends CrudController<Employee> {
 		if (ratesApplyFrom) {
 			this._employeeService.assertMayRepriceTimeOf(id);
 		}
+		const previous = await this._employeeService.ratesBeforeUpdate(id, changes);
 		const employee = await this._commandBus.execute(new EmployeeUpdateCommand(id, changes));
-		return await this.withRepricedTime(id, employee, changes, ratesApplyFrom);
+		return await this.withRepricedTime(id, employee, changes, ratesApplyFrom, previous);
 	}
 
 	/**

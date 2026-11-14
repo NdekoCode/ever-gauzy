@@ -628,9 +628,7 @@ export class EmployeeResolver {
 	@Mutation('updateEmployee')
 	@Permissions(PermissionsEnum.ORG_EMPLOYEES_EDIT)
 	async updateEmployee(@Args('input') input: IUpdateEmployeeInput): Promise<Employee> {
-		return await this.commandBus.execute(
-			new EmployeeUpdateCommand(input.id, this.updatePayload(input))
-		);
+		return await this.updateAndReprice(input.id, this.updatePayload(input));
 	}
 
 	/**
@@ -645,9 +643,19 @@ export class EmployeeResolver {
 	@Mutation('updateEmployeeProfile')
 	@Permissions(PermissionsEnum.PROFILE_EDIT)
 	async updateEmployeeProfile(@Args('input') input: IUpdateEmployeeProfileInput): Promise<Employee> {
-		return await this.commandBus.execute(
-			new EmployeeUpdateCommand(input.id, this.updatePayload(input))
-		);
+		return await this.updateAndReprice(input.id, this.updatePayload(input));
+	}
+
+	/**
+	 * The update both edit mutations dispatch, then the time a rate it changed re-prices, as on the REST routes: all
+	 * the time already tracked unless the organization's time logs keep their rates (see
+	 * EmployeeService.repriceTimeFrom). The rates are read before the save, to tell what it changed.
+	 */
+	private async updateAndReprice(id: Id, changes: IEmployeeUpdateInput): Promise<Employee> {
+		const previous = await this.employeeService.ratesBeforeUpdate(id, changes);
+		const employee = await this.commandBus.execute(new EmployeeUpdateCommand(id, changes));
+		await this.employeeService.repriceTimeFrom(id, changes, undefined, previous);
+		return employee;
 	}
 
 	/**

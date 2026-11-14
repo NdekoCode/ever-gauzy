@@ -2,7 +2,11 @@ import '../core/entities/internal';
 
 import { PermissionsEnum } from '@gauzy/contracts';
 import { RequestContext } from '../core/context';
-import { repriceMemberProjectTime, repriceProjectTime } from '../time-tracking/time-log/time-log-repricing';
+import {
+	keepsTimeLogRates,
+	repriceMemberProjectTime,
+	repriceProjectTime
+} from '../time-tracking/time-log/time-log-repricing';
 import { OrganizationProject } from './organization-project.entity';
 import { OrganizationProjectEmployee } from './organization-project-employee.entity';
 import { OrganizationProjectRateService } from './organization-project-rate.service';
@@ -12,7 +16,8 @@ jest.mock('../user-organization/assert-organization-membership', () => ({
 }));
 jest.mock('../time-tracking/time-log/time-log-repricing', () => ({
 	repriceProjectTime: jest.fn(async () => 4),
-	repriceMemberProjectTime: jest.fn(async () => 2)
+	repriceMemberProjectTime: jest.fn(async () => 2),
+	keepsTimeLogRates: jest.fn(async () => false)
 }));
 
 const TENANT = 'tenant-1';
@@ -22,7 +27,8 @@ const FROM = '2026-10-01T00:00:00.000Z';
 
 /**
  * A client rate change says whether time already tracked takes it: with a day (`applyFrom`), the project's time logs
- * from that day do, and the answer says how many; without one, only time recorded from then on does.
+ * from that day do, and the answer says how many. Without one, all of it does, as before rates were stored, unless the
+ * organization's time logs keep their rates: then only time recorded from then on does.
  */
 describe('OrganizationProjectRateService: a client rate applied from a day', () => {
 	let service: OrganizationProjectRateService;
@@ -32,6 +38,7 @@ describe('OrganizationProjectRateService: a client rate applied from a day', () 
 	beforeEach(() => {
 		(repriceProjectTime as jest.Mock).mockClear();
 		(repriceMemberProjectTime as jest.Mock).mockClear();
+		(keepsTimeLogRates as jest.Mock).mockReset().mockResolvedValue(false);
 		transactional = { update: jest.fn(async () => ({ affected: 1 })) };
 		projectUpdate = jest.fn(async () => ({ affected: 1 }));
 		const manager = {
@@ -105,7 +112,38 @@ describe('OrganizationProjectRateService: a client rate applied from a day', () 
 		expect((repriceMemberProjectTime as jest.Mock).mock.calls[0][0]).toBe(transactional);
 	});
 
-	it('re-prices nothing without a day: past time keeps its price', async () => {
+	it("re-prices all the project's time without a day, where the organization's time logs follow the rate", async () => {
+		const answer = await service.updateProjectRate(PROJECT, { organizationId: ORGANIZATION, billRateValue: 120 });
+
+		expect(repriceProjectTime).toHaveBeenCalledWith(
+			transactional,
+			{ tenantId: TENANT, organizationId: ORGANIZATION, from: null },
+			PROJECT,
+			{ billRateValue: 120, currency: 'EUR' }
+		);
+		expect(answer).toEqual({ id: PROJECT, billRateValue: 120, currency: 'EUR', repricedTimeLogs: 4 });
+		expect(projectUpdate).not.toHaveBeenCalled();
+	});
+
+	it("re-prices all of a member's time on the project without a day, where the time logs follow the rate", async () => {
+		const answer = await service.updateMemberRate(PROJECT, 'employee-2', {
+			organizationId: ORGANIZATION,
+			billRateValue: 95
+		});
+
+		expect(repriceMemberProjectTime).toHaveBeenCalledWith(
+			transactional,
+			{ tenantId: TENANT, organizationId: ORGANIZATION, from: null },
+			PROJECT,
+			'employee-2',
+			{ billRateValue: 95, currency: 'EUR' }
+		);
+		expect(answer).toMatchObject({ billRateValue: 95, repricedTimeLogs: 2 });
+	});
+
+	it("re-prices nothing without a day where the organization's time logs keep their rates", async () => {
+		(keepsTimeLogRates as jest.Mock).mockResolvedValue(true);
+
 		const answer = await service.updateProjectRate(PROJECT, { organizationId: ORGANIZATION, billRateValue: 120 });
 
 		expect(repriceProjectTime).not.toHaveBeenCalled();
