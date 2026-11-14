@@ -145,6 +145,11 @@ export interface IOrganization
 	defaultInvoiceEstimateTerms?: string;
 	convertAcceptedEstimates?: boolean;
 	daysUntilDue?: number;
+	/**
+	 * Whether the client of an unpaid invoice gets payment reminders by email, before and after its due date. Off
+	 * unless the organization turns it on.
+	 */
+	invoiceRemindersEnabled?: boolean;
 	accountingTemplates?: IAccountingTemplate[];
 	reportOrganizations?: IReportOrganization[];
 	/** Upwork Organization For Gauzy AI*/
@@ -215,6 +220,7 @@ export interface IOrganizationCreateInput
 	defaultInvoiceEstimateTerms?: string;
 	convertAcceptedEstimates?: boolean;
 	daysUntilDue?: number;
+	invoiceRemindersEnabled?: boolean;
 	accountingTemplates?: IAccountingTemplate[];
 
 	isImporting?: boolean;
