@@ -88,6 +88,7 @@ import { ManagedEmployeeService } from '../../employee/managed-employee.service'
 import { Organization } from '../../organization/organization.entity';
 import { findStoredPayRates, isPayRateSet, mayReadPayRateOf, StoredPayRate } from '../../employee/pay-rate';
 import { TimeLog } from './time-log.entity';
+import type { TimeLogHistoryOptions } from './time-log-history.writer';
 import { owedRateOf, payRateNeedsOrganizationCurrency } from './owed-rate';
 import {
 	mikroOrmNotOnLiveInvoiceKey,
@@ -2213,8 +2214,11 @@ export class TimeLogService extends TenantAwareCrudService<TimeLog> {
 
 			// Create the new time log entry. The handler reads it back through this service, whose employee
 			// filter would not find a log written for a member the caller manages. Time added by a person is
-			// recorded in the entry's history.
-			const history = { reason: request.reason ?? null };
+			// recorded in the entry's history; the time a tracker uploads is not, as the time its timer records.
+			let history: TimeLogHistoryOptions | undefined;
+			if (!isTrackerUpload) {
+				history = { reason: request.reason ?? null };
+			}
 			return await this.withoutEmployeeFilter(() =>
 				this.commandBus.execute(new TimeLogCreateCommand({ ...entry, organizationId }, history))
 			);
