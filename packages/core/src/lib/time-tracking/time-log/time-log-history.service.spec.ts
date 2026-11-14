@@ -207,5 +207,23 @@ describe('TimeLogHistoryService scoping', () => {
 			const order = calls.filter((call) => /^(orderBy|addOrderBy) /.test(call));
 			expect(order).toEqual(['orderBy history.createdAt DESC', 'addOrderBy history.id DESC']);
 		});
+
+		it('keeps the rows of an entry deleted for good, read by the owner they keep', async () => {
+			signedInAs('employee-manager');
+			const { service, manager } = setup({ manages: true });
+			const { builder, calls } = recordingBuilder();
+			manager.createQueryBuilder.mockReturnValue(builder);
+
+			await service.findPeriodHistory({ ...PERIOD, employeeIds: ['employee-paul'] } as never);
+
+			const joins = calls.filter((call) => /^(innerJoin|leftJoin) /.test(call)).map((call) => call.split(' ')[0]);
+			expect(joins).toEqual(['leftJoin']);
+			expect(calls).toEqual(
+				expect.arrayContaining([
+					expect.stringMatching(/entry.{1,3}id.{0,2} IS NULL/),
+					expect.stringMatching(/data.*employeeId.* IN \(:\.\.\.employeeIds\)/)
+				])
+			);
+		});
 	});
 });

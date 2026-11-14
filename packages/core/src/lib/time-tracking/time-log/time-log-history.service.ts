@@ -69,8 +69,8 @@ export class TimeLogHistoryService {
 
 	/**
 	 * The changes recorded over a period on the entries of the members the caller may read, newest first, optionally
-	 * of some members and some kinds. Rows of an entry deleted for good (`forceDelete`) are left out: its owner can no
-	 * longer be checked against the time scoping.
+	 * of some members and some kinds. The rows of an entry deleted for good (`forceDelete`) are kept, read by the owner
+	 * they keep, as the history of that entry is.
 	 *
 	 * @param query The period, members, kinds and page.
 	 */
@@ -87,7 +87,8 @@ export class TimeLogHistoryService {
 		const builder = this.typeOrmTimeLogRepository.manager
 			.createQueryBuilder(ActivityLog, 'history')
 			.withDeleted()
-			.innerJoin(TimeLog, 'entry', entryJoinCondition())
+			// A left join: the entry of a row may have been deleted for good.
+			.leftJoin(TimeLog, 'entry', entryJoinCondition())
 			.where(p(`"history"."entity" = :entity`), { entity: BaseEntityEnum.TimeLog })
 			.andWhere(p(`"history"."deletedAt" IS NULL`))
 			.andWhere(p(`"history"."tenantId" = :tenantId`), { tenantId })
@@ -97,7 +98,7 @@ export class TimeLogHistoryService {
 				endDate: new Date(query.endDate)
 			});
 		if (employeeIds) {
-			builder.andWhere(p(`"entry"."employeeId" IN (:...employeeIds)`), { employeeIds });
+			builder.andWhere(new Brackets((owner) => this.whereOwnerIn(owner, employeeIds)));
 		}
 		if (query.kinds?.length) {
 			builder.andWhere(new Brackets((kinds) => this.whereKinds(kinds, query.kinds)));
@@ -146,6 +147,17 @@ export class TimeLogHistoryService {
 		return [ownEmployeeId];
 	}
 
+	/** The members' rows: by the entry's owner, or by the owner the rows keep once the entry is deleted for good. */
+	private whereOwnerIn(builder: WhereExpressionBuilder, employeeIds: ID[]): void {
+		builder.where(p(`"entry"."employeeId" IN (:...employeeIds)`), { employeeIds }).orWhere(
+			new Brackets((deleted) => {
+				deleted
+					.where(p(`"entry"."id" IS NULL`))
+					.andWhere(`${keptOwner()} IN (:...employeeIds)`, { employeeIds });
+			})
+		);
+	}
+
 	/** One condition per kind asked, joined by OR. */
 	private whereKinds(builder: WhereExpressionBuilder, kinds: TimeLogChangeKindEnum[]): void {
 		let parameterIndex = 0;
@@ -187,6 +199,17 @@ function entryJoinCondition(): string {
 		);
 	}
 	return `"entry"."id" = "history"."entityId"`;
+}
+
+/** The owner a history row keeps (`data.employeeId`), on each database (jsonb, json, or text holding JSON). */
+function keptOwner(): string {
+	if (isPostgres()) {
+		return `"history"."data"->>'employeeId'`;
+	}
+	if (isMySQL()) {
+		return "JSON_UNQUOTE(JSON_EXTRACT(`history`.`data`, '$.employeeId'))";
+	}
+	return `json_extract("history"."data", '$.employeeId')`;
 }
 
 /** The `updatedFields` column as text, on each database (jsonb on PostgreSQL, json on MySQL, text on SQLite). */
