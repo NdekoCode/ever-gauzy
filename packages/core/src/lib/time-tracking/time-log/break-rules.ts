@@ -1,4 +1,5 @@
 import { ConflictException, ForbiddenException } from '@nestjs/common';
+import * as moment from 'moment';
 import { IOrganization, ITimeLog, TimeLogType } from '@gauzy/contracts';
 
 /** The code of the refusal of a break in an organization that does not allow breaks. */
@@ -73,4 +74,28 @@ export function assertBreakTypeKept(stored: Pick<ITimeLog, 'logType'>, requested
 			code: BREAK_TYPE_LOCKED
 		});
 	}
+}
+
+/**
+ * When a running break ends: at the start of the run that replaces it, when one is given (a start may be set earlier
+ * than now), held between the break's own start and now. A run starting with or before the break replaces all of it,
+ * so the break then ends at its own start.
+ *
+ * @param timeLog The running break.
+ * @param replacedAt The start of the run that replaces it, if any.
+ */
+export function breakEnd(timeLog: Pick<ITimeLog, 'startedAt'>, replacedAt?: Date): Date {
+	const now = moment.utc();
+	if (!replacedAt) {
+		return now.toDate();
+	}
+	const replaced = moment.utc(replacedAt);
+	const breakStart = moment.utc(timeLog.startedAt);
+	if (replaced.isSameOrBefore(breakStart)) {
+		return breakStart.toDate();
+	}
+	if (replaced.isAfter(now)) {
+		return now.toDate();
+	}
+	return replaced.toDate();
 }
