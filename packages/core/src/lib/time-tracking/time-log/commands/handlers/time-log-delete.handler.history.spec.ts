@@ -31,8 +31,11 @@ describe('TimeLogDeleteHandler: history of a deletion', () => {
 			timesheetId: 'timesheet-1'
 		});
 
-	function setup() {
-		const transactionRepository = { softDelete: jest.fn(async () => ({ affected: 2 })) };
+	function setup(stored: TimeLog[] = [entry('log-1', 'task-login'), entry('log-2', 'task-signup')]) {
+		const transactionRepository = {
+			softDelete: jest.fn(async () => ({ affected: 2 })),
+			find: jest.fn(async () => stored)
+		};
 		const transactionManager = { getRepository: jest.fn(() => transactionRepository) };
 		const repository = {
 			softDelete: jest.fn(async () => ({ affected: 2 }))
@@ -48,6 +51,17 @@ describe('TimeLogDeleteHandler: history of a deletion', () => {
 	}
 
 	beforeEach(() => jest.spyOn(console, 'log').mockImplementation(() => undefined));
+
+	it('records the entries as stored, when the logs it is handed lack their scope (a MikroORM read)', async () => {
+		const { handler, record } = setup([entry('log-1', 'task-login')]);
+		const serialized = [{ id: 'log-1', startedAt: new Date('2026-11-10T09:00:00.000Z'), timeSlots: [] }];
+
+		await handler.execute(new TimeLogDeleteCommand(serialized as unknown as TimeLog[], false, {}));
+
+		const [, records] = record.mock.calls[0];
+		expect(records[0].subject).toMatchObject({ id: 'log-1', tenantId: 'tenant-1', employeeId: 'employee-paul' });
+		expect(records[0].change.previousValues).toContainEqual({ employeeId: 'employee-paul' });
+	});
 	afterEach(() => jest.restoreAllMocks());
 
 	it('deletes the entries and records what each held, in one transaction', async () => {

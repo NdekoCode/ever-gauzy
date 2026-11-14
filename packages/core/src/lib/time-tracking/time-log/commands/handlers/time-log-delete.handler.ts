@@ -151,8 +151,13 @@ export class TimeLogDeleteHandler implements ICommandHandler<TimeLogDeleteComman
 			return this.deleteTimeLogs(timeLogs, forceDelete);
 		}
 		return this.dataSource.transaction(async (manager) => {
-			const result = await this.deleteTimeLogs(timeLogs, forceDelete, manager.getRepository(TimeLog));
-			const records = timeLogs.map((timeLog) => ({
+			const repository = manager.getRepository(TimeLog);
+			// What each entry holds, read as stored: a log read through MikroORM arrives without its scalar ids
+			// (tenant, employee, project), which the history keeps.
+			const logIds = timeLogs.map((timeLog) => timeLog.id);
+			const stored = await repository.find({ where: { id: In(logIds) } });
+			const result = await this.deleteTimeLogs(timeLogs, forceDelete, repository);
+			const records = stored.map((timeLog) => ({
 				subject: historySubject(timeLog),
 				change: deletedChange(timeLog),
 				reason: history.reason
