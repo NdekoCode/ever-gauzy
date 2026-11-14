@@ -24,13 +24,14 @@ import { ACCESS_TOKEN_USE_RESOLUTION_MS, JwtStrategy } from './jwt.strategy';
 
 /**
  * A session its user signed out from another session ends at its next request (ever-co/ever-gauzy#11921): the strategy
- * reads the access token's stored record by the id its payload carries, and refuses it once it was revoked by a session
- * sign-out. Every other token is judged as before, a logged-out one included.
+ * reads the session's sign-out marker by the session its payload names, and the access token's stored record by the id
+ * it carries, and refuses the token when the session is marked or the token was revoked by a session sign-out. Every
+ * other token is judged as before, a logged-out one included.
  */
 describe('JwtStrategy: a signed-out session', () => {
 	const payload = { id: 'user-1', tenantId: 'tenant', tokenId: 'access-token-1', tokenType: 'ACCESS_TOKEN_TYPE' };
 
-	function build(stored: Record<string, unknown> | null) {
+	function build(stored: Record<string, unknown> | null, signedOutSessions: string[] = []) {
 		const authService = {
 			getAuthenticatedUser: jest.fn(async () => ({
 				id: 'user-1',
@@ -49,6 +50,9 @@ describe('JwtStrategy: a signed-out session', () => {
 		};
 		const accessTokenService = {
 			findById: jest.fn(async () => stored),
+			isSessionSignedOut: jest.fn(async (userId: string, sessionId: string) =>
+				signedOutSessions.includes(`${userId}/${sessionId}`)
+			),
 			touch: jest.fn(async () => undefined)
 		};
 		const strategy = new JwtStrategy(
@@ -125,6 +129,38 @@ describe('JwtStrategy: a signed-out session', () => {
 		await strategy.validate(payload);
 
 		expect(accessTokenService.touch).not.toHaveBeenCalled();
+	});
+
+	describe('the sign-out marker of the session', () => {
+		const inLaptopSession = { ...payload, sessionId: 'laptop', sessionStartedAt: '2026-11-14T08:00:00.000Z' };
+
+		it('refuses an active token of a signed-out session: one minted after the sign-out', async () => {
+			const { strategy, accessTokenService } = build(activeToken(null), ['user-1/laptop']);
+
+			await expect(strategy.validate(inLaptopSession)).rejects.toThrow(UnauthorizedException);
+			expect(accessTokenService.isSessionSignedOut).toHaveBeenCalledWith('user-1', 'laptop');
+			expect(accessTokenService.touch).not.toHaveBeenCalled();
+		});
+
+		it("refuses it without the token's own record too", async () => {
+			const { strategy } = build(null, ['user-1/laptop']);
+
+			await expect(strategy.validate(inLaptopSession)).rejects.toThrow(UnauthorizedException);
+		});
+
+		it('accepts a token of a session still signed in', async () => {
+			const { strategy } = build(activeToken(new Date()), ['user-1/phone', 'user-2/laptop']);
+
+			await expect(strategy.validate(inLaptopSession)).resolves.toMatchObject({ id: 'user-1' });
+		});
+
+		it('reads no marker for a token naming no session', async () => {
+			const { strategy, accessTokenService } = build(activeToken(new Date()));
+
+			await strategy.validate(payload);
+
+			expect(accessTokenService.isSessionSignedOut).not.toHaveBeenCalled();
+		});
 	});
 
 	it('is given the access token store by Nest when the module provides it, as AuthModule does', async () => {

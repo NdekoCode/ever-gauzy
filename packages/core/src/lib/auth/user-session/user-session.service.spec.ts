@@ -11,6 +11,7 @@ jest.mock('../login-attempt.service', () => ({
 
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { sign } from 'jsonwebtoken';
+import { environment } from '@gauzy/config';
 import { RequestContext } from '../../core/context/request-context';
 import { TokenStatus } from '../../token/interfaces/token.interface';
 import { USER_SESSION_SIGNED_OUT_REASON } from './user-session-revocation';
@@ -42,7 +43,13 @@ const inSession = (sessionId: string, extra: Record<string, unknown> = {}) => ({
 /**
  * Marie, signed in on the web (the request's session) and on her laptop, with a personal API token's session too.
  */
-function build({ hash = 'hashed-password', passwordOk = true, codeOk = true, revokedAccess = [] as any[] } = {}) {
+function build({
+	hash = 'hashed-password',
+	passwordOk = true,
+	codeOk = true,
+	revokedAccess = [] as any[],
+	signedOutSessions = [] as string[]
+} = {}) {
 	const refreshTokens = [
 		token('r-web', 'REFRESH_TOKEN_TYPE', inSession('web')),
 		token('r-laptop', 'REFRESH_TOKEN_TYPE', inSession('laptop'))
@@ -53,9 +60,12 @@ function build({ hash = 'hashed-password', passwordOk = true, codeOk = true, rev
 		token('a-api', 'ACCESS_TOKEN_TYPE', { apiTokenId: 'api-token-1' })
 	];
 	const revoked: string[] = [];
+	/** The sign-out markers written and the tokens revoked, in order. */
+	const events: string[] = [];
 	const revokeById = jest.fn(async ({ tokenId, reason }: { tokenId: string; reason: string }) => {
 		expect(reason).toBe(USER_SESSION_SIGNED_OUT_REASON);
 		revoked.push(tokenId);
+		events.push(`revoke ${tokenId}`);
 		// A revoked token is no longer active, as the store answers it.
 		for (const list of [refreshTokens, accessTokens]) {
 			const index = list.findIndex((candidate) => candidate.id === tokenId);
@@ -71,7 +81,15 @@ function build({ hash = 'hashed-password', passwordOk = true, codeOk = true, rev
 		accessTokenService: {
 			findActive: jest.fn(async () => accessTokens),
 			findRevokedSince: jest.fn(async () => revokedAccess),
-			revokeById
+			revokeById,
+			markSessionSignedOut: jest.fn(
+				async (_userId: string, sessionId: string, _expiresAt: Date, _reason: string) => {
+					events.push(`mark ${sessionId}`);
+				}
+			),
+			isSessionSignedOut: jest.fn(async (_userId: string, sessionId: string) =>
+				signedOutSessions.includes(sessionId)
+			)
 		},
 		refreshTokenService: { findActive: jest.fn(async () => refreshTokens), revokeById },
 		userService: {
@@ -88,7 +106,7 @@ function build({ hash = 'hashed-password', passwordOk = true, codeOk = true, rev
 		services.passwordHashService as any,
 		services.loginAttemptService as any
 	);
-	return { service, services, revoked, attempt };
+	return { service, services, revoked, attempt, events };
 }
 
 /** A request made by Marie from the session `sessionId` (none: a token minted before sessions were named). */
@@ -114,6 +132,16 @@ describe('UserSessionService.listOwn', () => {
 		]);
 	});
 
+	it('leaves out a signed-out session, while a token minted in it during the sign-out is active', async () => {
+		const { service, services } = build({ signedOutSessions: ['web'] });
+		requestFrom('laptop');
+
+		const sessions = await service.listOwn();
+
+		expect(sessions.map(({ id }) => id)).toEqual(['laptop']);
+		expect(services.accessTokenService.isSessionSignedOut).toHaveBeenCalledWith(MARIE, 'web');
+	});
+
 	it('is refused to a session that came from an API token', async () => {
 		const { service } = build();
 		requestFrom(null, { apiTokenId: 'api-token-1' });
@@ -124,13 +152,15 @@ describe('UserSessionService.listOwn', () => {
 
 describe('UserSessionService.signOutOthers', () => {
 	it('signs out every other session with the password, and keeps the current one and the API token', async () => {
-		const { service, revoked, attempt } = build();
+		const { service, revoked, attempt, events } = build();
 		requestFrom('web');
 
 		await expect(service.signOutOthers({ password: 'right' })).resolves.toEqual({ signedOut: 1 });
 
 		expect(revoked.sort()).toEqual(['a-laptop', 'r-laptop']);
 		expect(attempt.succeed).toHaveBeenCalled();
+		expect(events.filter((event) => event.startsWith('mark'))).toEqual(['mark laptop']);
+		expect(events.indexOf('mark laptop')).toBeLessThan(events.indexOf('revoke r-laptop'));
 	});
 
 	it('signs out nobody with a wrong password, and counts the try', async () => {
@@ -213,14 +243,23 @@ function storeWithRefreshDuringSignOut({ legacy = false } = {}) {
 		return true;
 	});
 	const attempt = { fail: jest.fn(async () => undefined), succeed: jest.fn(async () => undefined) };
+	const marked: string[] = [];
+	const markSessionSignedOut = jest.fn(async (_userId: string, sessionId: string) => {
+		marked.push(sessionId);
+	});
 	const service = new UserSessionService(
-		{ findActive: jest.fn(async () => accessTokens), findRevokedSince: jest.fn(async () => []), revokeById } as any,
+		{
+			findActive: jest.fn(async () => accessTokens),
+			findRevokedSince: jest.fn(async () => []),
+			revokeById,
+			markSessionSignedOut
+		} as any,
 		{ findActive: jest.fn(async () => refreshTokens), revokeById } as any,
 		{ findOneByIdString: jest.fn(async () => ({ id: MARIE, email: 'marie@ever.co', hash: 'h' })) } as any,
 		{ verify: jest.fn(async () => true) } as any,
 		{ begin: jest.fn(async () => attempt) } as any
 	);
-	return { service, revoked };
+	return { service, revoked, marked };
 }
 
 describe('UserSessionService, a refresh landing while a sign-out runs', () => {
@@ -231,6 +270,15 @@ describe('UserSessionService, a refresh landing while a sign-out runs', () => {
 		await service.signOutOthers({ password: 'right' });
 
 		expect(revoked.sort()).toEqual(['a-laptop-2', 'r-laptop-2']);
+	});
+
+	it('marks the session a refresh started during the sign-out of an old token too', async () => {
+		const { service, marked } = storeWithRefreshDuringSignOut({ legacy: true });
+		requestFrom('web');
+
+		await service.signOutOthers({ password: 'right' });
+
+		expect(marked).toEqual(['laptop-after-refresh']);
 	});
 
 	it('never reports a sign-out that left a token active', async () => {
@@ -289,6 +337,21 @@ describe('UserSessionService.signOut', () => {
 		await service.signOut('laptop');
 
 		expect(revoked.sort()).toEqual(['a-laptop', 'r-laptop']);
+	});
+
+	it('writes the marker of the session before it revokes a token, kept as long as a token can live', async () => {
+		const { service, services, events } = build();
+		requestFrom('web');
+		const before = Date.now();
+
+		await service.signOut('laptop');
+
+		expect(events[0]).toBe('mark laptop');
+		expect(events.filter((event) => event.startsWith('mark'))).toEqual(['mark laptop']);
+		const [userId, sessionId, expiresAt, reason] = services.accessTokenService.markSessionSignedOut.mock.calls[0];
+		expect([userId, sessionId, reason]).toEqual([MARIE, 'laptop', USER_SESSION_SIGNED_OUT_REASON]);
+		const refreshLifetimeMs = (Number(environment.JWT_REFRESH_TOKEN_EXPIRATION_TIME) || 30 * 24 * 60 * 60) * 1000;
+		expect((expiresAt as Date).getTime()).toBeGreaterThanOrEqual(before + refreshLifetimeMs);
 	});
 
 	it('refuses the session of the request', async () => {

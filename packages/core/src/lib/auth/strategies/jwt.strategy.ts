@@ -24,6 +24,7 @@ import { RoleAuthorizationService } from '../../role/role-authorization.service'
 import { UserOrganizationService } from '../../user-organization/user-organization.services';
 import { AccessTokenService } from '../../access-token/access-token.service';
 import { IToken } from '../../token/interfaces';
+import { readSessionClaims } from '../user-session/user-session-claims';
 import { isSignedOutSessionToken } from '../user-session/user-session-revocation';
 import { AuthenticatedUserCache } from './authenticated-user-cache';
 
@@ -144,22 +145,25 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
 	}
 
 	/**
-	 * Whether the access token belongs to a session its user signed out (see `user-session-revocation.ts`), read from the
-	 * token store by the id its payload carries. A token without that id (minted before the token store) and a token the
-	 * store does not hold are judged as before. A token still in use gets its use recorded, at most every
-	 * {@link ACCESS_TOKEN_USE_RESOLUTION_MS}, for the session list's last activity.
+	 * Whether the access token belongs to a session its user signed out. Two indexed reads, made together: the
+	 * sign-out marker of the session the payload names (`token/shared/session-sign-out-marker.ts`), and the token's
+	 * stored record, named by the id it carries (`user-session-revocation.ts`). The marker refuses every token of the
+	 * session, one minted after the sign-out included, whatever its own record says. A token carrying neither claim
+	 * (minted before them) and a token the store does not hold are judged as before. A token still in use gets its
+	 * use recorded, at most every {@link ACCESS_TOKEN_USE_RESOLUTION_MS}, for the session list's last activity.
 	 *
 	 * @param payload - The verified access-token payload.
 	 * @returns True when the token's session was signed out.
 	 */
 	private async isSignedOutSession(payload: JwtPayload): Promise<boolean> {
-		const tokenId = payload['tokenId'];
-		const canCheck = !!this._accessTokenService && typeof tokenId === 'string' && tokenId.length > 0;
-		if (!canCheck) {
+		if (!this._accessTokenService) {
 			return false;
 		}
 
-		const stored = await this._accessTokenService.findById(tokenId);
+		const [isMarked, stored] = await Promise.all([this.isMarkedSession(payload), this.storedAccessToken(payload)]);
+		if (isMarked) {
+			return true;
+		}
 		if (!stored) {
 			return false;
 		}
@@ -168,6 +172,33 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
 		}
 		this.recordUse(stored);
 		return false;
+	}
+
+	/**
+	 * @param payload - The verified access-token payload.
+	 * @returns Whether the session the token names carries a sign-out marker; false for a token naming no session.
+	 */
+	private async isMarkedSession(payload: JwtPayload): Promise<boolean> {
+		const session = readSessionClaims(payload);
+		const userId = payload.id;
+		const namesSession = !!session && typeof userId === 'string' && userId.length > 0;
+		if (!namesSession) {
+			return false;
+		}
+		return this._accessTokenService.isSessionSignedOut(userId, session.sessionId);
+	}
+
+	/**
+	 * @param payload - The verified access-token payload.
+	 * @returns The token's stored record; null for a token without a stored id, or one the store does not hold.
+	 */
+	private async storedAccessToken(payload: JwtPayload): Promise<IToken | null> {
+		const tokenId = payload['tokenId'];
+		const hasTokenId = typeof tokenId === 'string' && tokenId.length > 0;
+		if (!hasTokenId) {
+			return null;
+		}
+		return this._accessTokenService.findById(tokenId);
 	}
 
 	/**

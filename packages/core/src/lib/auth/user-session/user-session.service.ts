@@ -42,6 +42,21 @@ const SIGN_OUT_PASSES = 5;
 /** The access token lifetime when `JWT_TOKEN_EXPIRATION_TIME` is not set, in seconds (as `AccessTokenModule`). */
 const DEFAULT_ACCESS_TOKEN_LIFETIME_S = 24 * 60 * 60;
 
+/** The refresh token lifetime without `JWT_REFRESH_TOKEN_EXPIRATION_TIME`, in seconds (as `RefreshTokenModule`). */
+const DEFAULT_REFRESH_TOKEN_LIFETIME_S = 30 * 24 * 60 * 60;
+
+/** The access token lifetime, in milliseconds. */
+function accessTokenLifetimeMs(): number {
+	return (Number(environment.JWT_TOKEN_EXPIRATION_TIME) || DEFAULT_ACCESS_TOKEN_LIFETIME_S) * 1000;
+}
+
+/** How long a token of a session can stay valid, in milliseconds: a session's sign-out marker is kept that long. */
+function sessionTokenLifetimeMs(): number {
+	const refreshMs =
+		(Number(environment.JWT_REFRESH_TOKEN_EXPIRATION_TIME) || DEFAULT_REFRESH_TOKEN_LIFETIME_S) * 1000;
+	return Math.max(refreshMs, accessTokenLifetimeMs());
+}
+
 /** Whether a token belongs to a session: a refresh token, or a sign-in's access token (not an API token's). */
 function isSessionToken(token: IToken): boolean {
 	if (token.tokenType === REFRESH_TOKEN_TYPE) {
@@ -59,8 +74,10 @@ function isSessionToken(token: IToken): boolean {
  * **Only a person in their own session manages sessions.** `assertFirstPartyRequest` refuses a third-party OAuth-app
  * token and a session that came from a personal API token, whose tokens are not sessions and are never signed out here.
  *
- * Signing a session out revokes its access and refresh tokens with `USER_SESSION_SIGNED_OUT_REASON`: its refresh fails
- * at once, and `JwtStrategy` refuses its access token at its next request.
+ * Signing a session out first writes its sign-out marker (`token/shared/session-sign-out-marker.ts`), then revokes its
+ * access and refresh tokens with `USER_SESSION_SIGNED_OUT_REASON`. The marker ends the session wherever its tokens are
+ * judged: `JwtStrategy` refuses its access tokens at their next request, the refresh guard its refresh tokens, and
+ * `AuthService` mints nothing more in it, so a request authenticated just before the sign-out cannot carry it on.
  */
 @Injectable()
 export class UserSessionService {
@@ -75,13 +92,19 @@ export class UserSessionService {
 	) {}
 
 	/**
-	 * The signed-in user's sessions, the current one first, then the most recently used.
+	 * The signed-in user's sessions, the current one first, then the most recently used. A session its user signed out
+	 * is left out, also while a token minted in it during the sign-out is still active in the store (that token is
+	 * refused wherever it is judged): the sign-out markers of the listed sessions are read together.
 	 */
 	async listOwn(): Promise<IUserSession[]> {
 		assertFirstPartyRequest('Listing sessions');
 		const userId = RequestContext.currentUserId();
 		const tokens = await this.activeTokensOf(userId);
-		return listUserSessions(tokens, this.currentSessionId(), new Date());
+		const sessions = listUserSessions(tokens, this.currentSessionId(), new Date());
+		const isSignedOut = await Promise.all(
+			sessions.map((session) => this.accessTokenService.isSessionSignedOut(userId, session.id))
+		);
+		return sessions.filter((_session, index) => !isSignedOut[index]);
 	}
 
 	/**
@@ -113,8 +136,10 @@ export class UserSessionService {
 				message: 'This session started before sessions were named: sign out all the other sessions instead.'
 			});
 		}
+		const signedOut = new Set<string>();
+		await this.markSignedOut(userId, [sessionId], signedOut);
 		const isOfSession = (token: IToken) => sessionIdOf(token) === sessionId;
-		await this.signOutTokens(userId, isOfSession, this.currentSessionId());
+		await this.signOutTokens(userId, isOfSession, this.currentSessionId(), signedOut);
 	}
 
 	/**
@@ -141,7 +166,7 @@ export class UserSessionService {
 		const tokens = await this.activeTokensOf(userId);
 		const otherSessions = groupUserSessions(tokens, new Date()).filter((group) => group.id !== currentSessionId);
 		const isOutsideCurrentSession = (token: IToken) => sessionIdOf(token) !== currentSessionId;
-		await this.signOutTokens(userId, isOutsideCurrentSession, currentSessionId);
+		await this.signOutTokens(userId, isOutsideCurrentSession, currentSessionId, new Set<string>());
 
 		this.logger.log(`User ${userId} signed out ${otherSessions.length} other session(s)`);
 		return { signedOut: otherSessions.length };
@@ -149,18 +174,21 @@ export class UserSessionService {
 
 	/**
 	 * Revokes the user's tokens that `isTarget` picks, never those of the kept session nor an API token's or an
-	 * application's, until a read finds none left.
+	 * application's, until a read finds none left. Each pass first writes the sign-out marker of every session it found
+	 * tokens of (see {@link markSignedOut}).
 	 *
 	 * A refresh landing meanwhile rotates a picked refresh token and mints its successor and a new access token, in the
 	 * same session. Revoking the rotated token then fails, and it waits on the row the rotation locks, so the next read
 	 * sees what the rotation minted; a rotation that comes after finds its token revoked and fails.
 	 *
+	 * @param signedOut The sessions whose marker this sign-out already wrote; the ones it writes are added.
 	 * @throws ConflictException when tokens are still being minted after {@link SIGN_OUT_PASSES} passes.
 	 */
 	private async signOutTokens(
 		userId: ID,
 		isTarget: (token: IToken) => boolean,
-		keptSessionId: string | null
+		keptSessionId: string | null,
+		signedOut: Set<string>
 	): Promise<void> {
 		const isPicked = (token: IToken): boolean => {
 			const sessionId = sessionIdOf(token);
@@ -178,6 +206,7 @@ export class UserSessionService {
 				await this.reviseRevokedAccessTokens(userId, isPicked);
 				return;
 			}
+			await this.markSignedOut(userId, targets.map(sessionIdOf), signedOut);
 			await this.revoke(userId, targets);
 		}
 		throw new ConflictException({
@@ -187,13 +216,48 @@ export class UserSessionService {
 	}
 
 	/**
+	 * Writes the sign-out marker of each named session not marked yet by this sign-out. From then on every token of the
+	 * session is refused, one minted after the marker included, and nothing more is minted in it; the marker is kept as
+	 * long as a token of the session can stay valid.
+	 *
+	 * @param sessionIds The sessions; null (a token minted before sessions were named) is skipped.
+	 * @param signedOut The sessions this sign-out already marked; the ones marked here are added.
+	 */
+	private async markSignedOut(userId: ID, sessionIds: (string | null)[], signedOut: Set<string>): Promise<void> {
+		const isUnmarked = (sessionId: string | null): sessionId is string => {
+			if (sessionId === null) {
+				return false;
+			}
+			return !signedOut.has(sessionId);
+		};
+		const toMark = [...new Set(sessionIds)].filter(isUnmarked);
+		if (toMark.length === 0) {
+			return;
+		}
+		const expiresAt = new Date(Date.now() + sessionTokenLifetimeMs());
+		await Promise.all(
+			toMark.map((sessionId) =>
+				this.accessTokenService.markSessionSignedOut(
+					userId,
+					sessionId,
+					expiresAt,
+					USER_SESSION_SIGNED_OUT_REASON
+				)
+			)
+		);
+		toMark.forEach((sessionId) => signedOut.add(sessionId));
+	}
+
+	/**
 	 * Gives the access tokens of signed-out sessions that were already revoked for another reason (a logout, which leaves
 	 * its token usable until it expires) the sign-out's reason, so that `JwtStrategy` refuses them too. Only tokens that
 	 * can still be valid are read: those created within the access token lifetime.
 	 */
 	private async reviseRevokedAccessTokens(userId: ID, isPicked: (token: IToken) => boolean): Promise<void> {
-		const lifetimeMs = (Number(environment.JWT_TOKEN_EXPIRATION_TIME) || DEFAULT_ACCESS_TOKEN_LIFETIME_S) * 1000;
-		const revoked = await this.accessTokenService.findRevokedSince(userId, new Date(Date.now() - lifetimeMs));
+		const revoked = await this.accessTokenService.findRevokedSince(
+			userId,
+			new Date(Date.now() - accessTokenLifetimeMs())
+		);
 		const toRevise = revoked.filter(
 			(token) => token.revokedReason !== USER_SESSION_SIGNED_OUT_REASON && isPicked(token)
 		);
