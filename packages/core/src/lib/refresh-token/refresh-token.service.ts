@@ -68,6 +68,13 @@ export class RefreshTokenService {
 	}
 
 	/**
+	 * @returns Whether the user signed the session out.
+	 */
+	public async isSessionSignedOut(userId: string, sessionId: string): Promise<boolean> {
+		return this.tokenService.isSessionSignedOut(userId, sessionId);
+	}
+
+	/**
 	 * Revokes one of a user's refresh tokens by its id.
 	 *
 	 * @returns Whether this call revoked it.

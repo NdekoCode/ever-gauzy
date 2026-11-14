@@ -23,6 +23,7 @@ import {
 	CleanupInactiveTokensHandler,
 	CreateTokenHandler,
 	RevokeAllUserTokensHandler,
+	MarkSessionSignedOutHandler,
 	RevokeTokenByIdHandler,
 	RevokeTokenHandler,
 	RotateTokenHandler,
@@ -34,6 +35,7 @@ import {
 	GetActiveTokensHandler,
 	GetTokenAuditTrailHandler,
 	GetTokenByIdHandler,
+	IsSessionSignedOutHandler,
 	GetTokensHandler,
 	ValidateTokenHandler
 } from './queries';
@@ -69,6 +71,7 @@ const CommandHandlers: Type<unknown>[] = [
 	RevokeAllUserTokensHandler,
 	CleanupExpiredTokensHandler,
 	CleanupInactiveTokensHandler,
+	MarkSessionSignedOutHandler,
 	RevokeTokenByIdHandler,
 	TouchTokenHandler
 ];
@@ -76,6 +79,7 @@ const CommandHandlers: Type<unknown>[] = [
 const QueryHandlers: Type<unknown>[] = [
 	ValidateTokenHandler,
 	GetTokenByIdHandler,
+	IsSessionSignedOutHandler,
 	GetActiveTokensHandler,
 	GetTokensHandler,
 	GetTokenAuditTrailHandler

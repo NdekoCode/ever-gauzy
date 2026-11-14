@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { CommandBus, QueryBus } from '@nestjs/cqrs';
 import {
 	CreateTokenCommand,
+	MarkSessionSignedOutCommand,
 	RevokeAllUserTokensCommand,
 	RevokeTokenByIdCommand,
 	RevokeTokenCommand,
@@ -9,7 +10,13 @@ import {
 	TouchTokenCommand
 } from './commands';
 import { IGeneratedToken, IToken, ITokenQueryResult, IValidatedToken, TokenStatus } from './interfaces';
-import { GetActiveTokensQuery, GetTokenByIdQuery, GetTokensQuery, ValidateTokenQuery } from './queries';
+import {
+	GetActiveTokensQuery,
+	GetTokenByIdQuery,
+	GetTokensQuery,
+	IsSessionSignedOutQuery,
+	ValidateTokenQuery
+} from './queries';
 import { ScopedTokenConfig } from './scoped-config.registry';
 
 /**
@@ -128,6 +135,20 @@ export class ScopedTokenService {
 		reviseRevoked?: boolean;
 	}): Promise<boolean> {
 		return this.commandBus.execute(new RevokeTokenByIdCommand({ ...dto, tokenType: this.tokenType }));
+	}
+
+	/**
+	 * Record that the user signed a session out, until `expiresAt` (see `shared/session-sign-out-marker.ts`).
+	 */
+	async markSessionSignedOut(userId: string, sessionId: string, expiresAt: Date, reason: string): Promise<void> {
+		return this.commandBus.execute(new MarkSessionSignedOutCommand(userId, sessionId, expiresAt, reason));
+	}
+
+	/**
+	 * Whether the user signed the session out.
+	 */
+	async isSessionSignedOut(userId: string, sessionId: string): Promise<boolean> {
+		return this.queryBus.execute(new IsSessionSignedOutQuery(userId, sessionId));
 	}
 
 	/**

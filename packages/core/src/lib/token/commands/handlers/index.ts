@@ -4,5 +4,6 @@ export * from './create-token-command.handler';
 export * from './revoke-all-user-token-command.handler';
 export * from './revoke-token-command.handler';
 export * from './revoke-token-by-id-command.handler';
+export * from './mark-session-signed-out-command.handler';
 export * from './rotate-token-command.handler';
 export * from './touch-token-command.handler';

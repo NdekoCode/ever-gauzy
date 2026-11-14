@@ -87,6 +87,25 @@ export class AccessTokenService {
 	}
 
 	/**
+	 * Records that the user signed the session out, until `expiresAt`.
+	 */
+	public async markSessionSignedOut(
+		userId: string,
+		sessionId: string,
+		expiresAt: Date,
+		reason: string
+	): Promise<void> {
+		await this.tokenService.markSessionSignedOut(userId, sessionId, expiresAt, reason);
+	}
+
+	/**
+	 * @returns Whether the user signed the session out.
+	 */
+	public async isSessionSignedOut(userId: string, sessionId: string): Promise<boolean> {
+		return this.tokenService.isSessionSignedOut(userId, sessionId);
+	}
+
+	/**
 	 * @param userId The user.
 	 * @param since The oldest creation date read.
 	 * @returns Their access tokens created since then and revoked.
