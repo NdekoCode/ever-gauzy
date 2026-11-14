@@ -1,5 +1,5 @@
 import { EntityManager, In } from 'typeorm';
-import { ActorTypeEnum, BaseEntityEnum, ID } from '@gauzy/contracts';
+import { ActorTypeEnum, BaseEntityEnum, ID, ITimeLog } from '@gauzy/contracts';
 import { ActivityLog } from '../../activity-log/activity-log.entity';
 import { generateActivityLogDescription } from '../../activity-log/activity-log.helper';
 import { RequestContext } from '../../core/context';
@@ -31,10 +31,28 @@ export interface TimeLogHistoryOptions {
 export interface TimeLogHistorySubject {
 	id: ID;
 	employeeId: ID;
-	organizationId: ID;
-	tenantId: ID;
+	organizationId?: ID;
+	tenantId?: ID;
 	taskId?: ID | null;
 	projectId?: ID | null;
+}
+
+/**
+ * The subject of a history row, read from a time log.
+ *
+ * @param timeLog The entry (as stored, or with its change applied).
+ */
+export function historySubject(
+	timeLog: Pick<ITimeLog, 'id' | 'employeeId' | 'organizationId' | 'tenantId' | 'taskId' | 'projectId'>
+): TimeLogHistorySubject {
+	return {
+		id: timeLog.id,
+		employeeId: timeLog.employeeId,
+		organizationId: timeLog.organizationId,
+		tenantId: timeLog.tenantId,
+		taskId: timeLog.taskId,
+		projectId: timeLog.projectId
+	};
 }
 
 /** One change to record, with the entry it belongs to. */
@@ -141,7 +159,7 @@ export async function recordTimeLogHistory(
 	if (records.length === 0) {
 		return;
 	}
-	const tenantId = records[0].subject.tenantId;
+	const tenantId = records[0].subject.tenantId ?? RequestContext.currentTenantId();
 	const ids = referencedIds(records.map((record) => record.change));
 	for (const record of records) {
 		if (record.subject.taskId) {

@@ -9,6 +9,8 @@ import { TimeLogService } from '../../time-log.service';
 import { TimeLog } from '../../time-log.entity';
 import { assertTimeLogReferencesOfTenant } from '../../time-log-references';
 import { TimeLogCreateCommand } from '../time-log-create.command';
+import { createdChange } from '../../time-log-history';
+import { historySubject, recordTimeLogHistory, TimeLogHistoryOptions } from '../../time-log-history.writer';
 import { MikroOrmTimeLogRepository } from '../../repository/mikro-orm-time-log.repository';
 import { TypeOrmTimeLogRepository } from '../../repository/type-orm-time-log.repository';
 
@@ -90,7 +92,7 @@ export class TimeLogCreateHandler implements ICommandHandler<TimeLogCreateComman
 		// Bulk create time slots
 		timeLog.timeSlots = await this._timeSlotService.bulkCreate(mergeTimeSlots, employeeId, organizationId);
 
-		await this.typeOrmTimeLogRepository.save(timeLog);
+		await this.saveTimeLog(timeLog, command.history);
 
 		// Recalculate timesheet activity
 		await this.recalculateTimesheet(timesheet);
@@ -110,6 +112,20 @@ export class TimeLogCreateHandler implements ICommandHandler<TimeLogCreateComman
 	 * @param timesheet ITimesheet
 	 * @returns TimeLog
 	 */
+	private async saveTimeLog(timeLog: TimeLog, history: TimeLogHistoryOptions | undefined): Promise<void> {
+		if (!history) {
+			await this.typeOrmTimeLogRepository.save(timeLog);
+			return;
+		}
+		// Added by a person: the entry and its history row are written together, or neither is.
+		await this.typeOrmTimeLogRepository.manager.transaction(async (manager) => {
+			await manager.getRepository(TimeLog).save(timeLog);
+			await recordTimeLogHistory(manager, [
+				{ subject: historySubject(timeLog), change: createdChange(timeLog), reason: history.reason }
+			]);
+		});
+	}
+
 	private createTimeLogEntity(input: Partial<TimeLog>, tenantId: ID, timesheet: ITimesheet): TimeLog {
 		const {
 			startedAt,
