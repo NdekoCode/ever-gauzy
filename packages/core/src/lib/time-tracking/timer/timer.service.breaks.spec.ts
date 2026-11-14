@@ -53,12 +53,19 @@ describe('TimerService and breaks', () => {
 
 	afterEach(() => jest.restoreAllMocks());
 
-	it('stops a break without the overlap cleanup, which would cut the work its range covers', async () => {
+	it('stops a break without reading its overlaps: the cleanup gets none, so it cuts no work its range covers', async () => {
 		const { service, handleConflictingTimeLogs } = serviceStopping(runningLog(TimeLogType.BREAK));
 
 		await service.stopTimer({ source: TimeLogSourceEnum.WEB_TIMER });
 
-		expect(handleConflictingTimeLogs).not.toHaveBeenCalled();
+		expect((service as unknown as { findOverlappingLogIds: jest.Mock }).findOverlappingLogIds).not.toHaveBeenCalled();
+		expect(handleConflictingTimeLogs).toHaveBeenCalledWith(
+			expect.anything(),
+			'tenant-1',
+			'organization-1',
+			false,
+			[]
+		);
 	});
 
 	it('still clears the overlaps when a work run stops', async () => {

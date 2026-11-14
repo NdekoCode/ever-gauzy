@@ -731,15 +731,20 @@ export class TimerService {
 		this.debug(() => `partial time log: ${JSON.stringify(partialTimeLog)}`);
 
 		// The logs this run overlaps as the stop begins, up to the end written below. The overlap cleanup after the stop
-		// cuts those only: a log another client writes meanwhile keeps its time, whether it still runs or not.
+		// cuts those only: a log another client writes meanwhile keeps its time, whether it still runs or not. A break
+		// never cuts other entries (see break-rules), so its stop reads none and the cleanup clears nothing
 		const endToWrite = partialTimeLog.stoppedAt ?? lastLog.stoppedAt;
-		const overlappingAtStop = await this.findOverlappingLogIds(
-			lastLog,
-			endToWrite,
-			runningLogIds,
-			tenantId,
-			organizationId
-		);
+		const stopsWork = !isBreak(lastLog);
+		let overlappingAtStop: ID[] = [];
+		if (stopsWork) {
+			overlappingAtStop = await this.findOverlappingLogIds(
+				lastLog,
+				endToWrite,
+				runningLogIds,
+				tenantId,
+				organizationId
+			);
+		}
 
 		// A run still going beside this one started before it, so it ends no later than this one's start (below)
 		const stoppedRunStartedAt = lastLog.startedAt;
@@ -762,14 +767,10 @@ export class TimerService {
 			turn
 		);
 
-		// Handle conflicting time logs: the ones this run overlapped as the stop began. A break never cuts other entries
-		// (see break-rules), so its stop clears nothing
+		// Handle conflicting time logs: the ones this run overlapped as the stop began (none for a break)
 		turn.assertHeld();
-		const stopsWork = !isBreak(lastLog);
-		if (stopsWork) {
-			const forceDelete = false;
-			await this.handleConflictingTimeLogs(lastLog, tenantId, organizationId, forceDelete, overlappingAtStop);
-		}
+		const forceDelete = false;
+		await this.handleConflictingTimeLogs(lastLog, tenantId, organizationId, forceDelete, overlappingAtStop);
 
 		// The employee no longer tracks time, unless a run is still going: one another client started meanwhile
 		await this.markNotTrackingAfterStop(employeeId, organizationId, tenantId);
