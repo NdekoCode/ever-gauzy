@@ -577,7 +577,6 @@ export class InvoicePaymentService {
 		this.agent ??= createSsrfSafeHttpsAgent();
 		return new Promise((resolve, reject) => {
 			let isSettled = false;
-			let deadline: ReturnType<typeof setTimeout> | undefined;
 			const settle = (outcome: () => void) => {
 				if (isSettled) {
 					return;
@@ -634,7 +633,7 @@ export class InvoicePaymentService {
 				}
 			);
 			// The socket timeout only covers silence: a reply that trickles in forever is cut at the deadline
-			deadline = setTimeout(() => fail('no complete answer in time'), CHECKOUT_TIMEOUT_MS);
+			const deadline = setTimeout(() => fail('no complete answer in time'), CHECKOUT_TIMEOUT_MS);
 			call.on('timeout', () => fail('the connector went silent'));
 			call.on('error', (error: Error) => fail(`it could not be reached (${error.message})`));
 			call.end(body);
