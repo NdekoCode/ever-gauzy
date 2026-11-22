@@ -2122,11 +2122,10 @@ export class StatisticService {
 		const canChangeSelectedEmployee = RequestContext.hasPermission(PermissionsEnum.CHANGE_SELECTED_EMPLOYEE);
 		const hasEmployeeIds = isNotEmpty(employeeIds);
 		const asksForAllMembers = hasEmployeeIdentity && !canChangeSelectedEmployee && !onlyMe && !hasEmployeeIds;
-		const canViewMembersLastLog = RequestContext.hasPermission(PermissionsEnum.ORG_MEMBER_LAST_LOG_VIEW);
 
-		let keepsAllMembers = asksForAllMembers && canViewMembersLastLog;
-		if (asksForAllMembers && !canViewMembersLastLog) {
-			keepsAllMembers = await this.canReadAllTeamMembers(user.employeeId, organizationTeamId, teamIds);
+		let keepsAllMembers = false;
+		if (asksForAllMembers) {
+			keepsAllMembers = await this.mayReadEveryTeamMember(user.employeeId, organizationTeamId, teamIds);
 		}
 
 		if (keepsAllMembers) {
@@ -2438,6 +2437,24 @@ export class StatisticService {
 				)
 			])
 		);
+	}
+
+	/**
+	 * Whether an employee may read the time of every member of the teams a task statistics request names: with
+	 * ORG_MEMBER_LAST_LOG_VIEW, the team presence permission, or when {@link canReadAllTeamMembers} lets them.
+	 *
+	 * @param employeeId - The caller's employee
+	 * @param organizationTeamId - The team the request names
+	 * @param teamIds - The other teams the request names
+	 * @returns true when the request may read every member of those teams
+	 */
+	private async mayReadEveryTeamMember(employeeId: ID, organizationTeamId: ID, teamIds: ID[]): Promise<boolean> {
+		const canViewMembersLastLog = RequestContext.hasPermission(PermissionsEnum.ORG_MEMBER_LAST_LOG_VIEW);
+		if (canViewMembersLastLog) {
+			return true;
+		}
+
+		return await this.canReadAllTeamMembers(employeeId, organizationTeamId, teamIds);
 	}
 
 	/**
