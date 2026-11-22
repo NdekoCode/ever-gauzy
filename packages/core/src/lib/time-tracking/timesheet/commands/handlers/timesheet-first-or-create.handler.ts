@@ -5,12 +5,13 @@ import { ITimesheet } from '@gauzy/contracts';
 import { RequestContext } from './../../../../core/context';
 import { MultiORM, MultiORMEnum, getORMType } from './../../../../core/utils';
 import { prepareSQLQuery as p } from './../../../../database/database.helper';
-import { TimesheetFirstOrCreateCommand } from './../timesheet-first-or-create.command';
+import { TimesheetFirstOrCreateCommand, TimesheetFirstOrCreateOptions } from './../timesheet-first-or-create.command';
 import { TimesheetCreateCommand } from './../timesheet-create.command';
 import { TypeOrmTimesheetRepository } from '../../repository/type-orm-timesheet.repository';
 import { MikroOrmTimesheetRepository } from '../../repository/mikro-orm-timesheet.repository';
 import { TypeOrmEmployeeRepository } from '../../../../employee/repository/type-orm-employee.repository';
 import { Timesheet } from './../../timesheet.entity';
+import { timesheetOfWeek } from '../../timesheet-of-week';
 
 @CommandHandler(TimesheetFirstOrCreateCommand)
 export class TimesheetFirstOrCreateHandler implements ICommandHandler<TimesheetFirstOrCreateCommand> {
@@ -27,6 +28,7 @@ export class TimesheetFirstOrCreateHandler implements ICommandHandler<TimesheetF
 		const { date, employeeId } = command;
 		let { organizationId } = command;
 		const tenantId = RequestContext.currentTenantId();
+		const options = command.options ?? {};
 
 		const startedAt = moment.utc(date).startOf('week');
 		const stoppedAt = moment.utc(date).endOf('week');
@@ -46,7 +48,7 @@ export class TimesheetFirstOrCreateHandler implements ICommandHandler<TimesheetF
 			switch (this.ormType) {
 				case MultiORMEnum.MikroORM: {
 					const knex = this.mikroOrmTimesheetRepository.getKnex();
-					const record = await knex('timesheet')
+					const records: ITimesheet[] = await knex('timesheet')
 						.withSchema(knex.userParams.schema)
 						.where(function () {
 							this.where(function () {
@@ -60,12 +62,9 @@ export class TimesheetFirstOrCreateHandler implements ICommandHandler<TimesheetF
 						.andWhere({ tenantId, organizationId, employeeId })
 						// Raw knex skips the soft-delete filter the ORM applies: never reuse a deleted timesheet
 						.whereNull('deletedAt')
-						.first();
+						.orderBy('createdAt', 'asc');
 
-					if (!record) {
-						throw new Error('No timesheet found');
-					}
-					return record;
+					return this.timesheetOrThrow(records, options);
 				}
 				case MultiORMEnum.TypeORM:
 				default: {
@@ -94,7 +93,8 @@ export class TimesheetFirstOrCreateHandler implements ICommandHandler<TimesheetF
 							})
 						);
 					});
-					return await query.getOneOrFail();
+					query.orderBy(`${query.alias}.createdAt`, 'ASC');
+					return this.timesheetOrThrow(await query.getMany(), options);
 				}
 			}
 		} catch (error) {
@@ -113,5 +113,19 @@ export class TimesheetFirstOrCreateHandler implements ICommandHandler<TimesheetF
 				})
 			);
 		}
+	}
+
+	/**
+	 * The week's timesheet the time goes to (see `timesheetOfWeek`), or a refusal that has the week given a new one.
+	 *
+	 * @param timesheets - The employee's timesheets of the week, oldest first.
+	 * @param options - Whether the time is new, and the timesheet it is in already.
+	 */
+	private timesheetOrThrow(timesheets: ITimesheet[], options: TimesheetFirstOrCreateOptions): ITimesheet {
+		const timesheet = timesheetOfWeek(timesheets, options);
+		if (!timesheet) {
+			throw new Error('No timesheet found');
+		}
+		return timesheet;
 	}
 }

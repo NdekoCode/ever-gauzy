@@ -25,7 +25,7 @@ describe('TimesheetFirstOrCreateHandler soft-deleted timesheet (MikroORM)', () =
 	let commandBus: { execute: jest.Mock };
 	let handler: TimesheetFirstOrCreateHandler;
 
-	const insertTimesheet = (id: string, deletedAt: Date | null) =>
+	const insertTimesheet = (id: string, deletedAt: Date | null, columns: { status?: string; createdAt?: Date } = {}) =>
 		db('timesheet').insert({
 			id,
 			tenantId: TENANT_ID,
@@ -33,7 +33,8 @@ describe('TimesheetFirstOrCreateHandler soft-deleted timesheet (MikroORM)', () =
 			employeeId: EMPLOYEE_ID,
 			startedAt: WEEK_START,
 			stoppedAt: WEEK_END,
-			deletedAt
+			deletedAt,
+			...columns
 		});
 
 	beforeEach(async () => {
@@ -53,6 +54,8 @@ describe('TimesheetFirstOrCreateHandler soft-deleted timesheet (MikroORM)', () =
 			table.datetime('startedAt');
 			table.datetime('stoppedAt');
 			table.datetime('deletedAt').nullable();
+			table.string('status').defaultTo('PENDING');
+			table.datetime('createdAt').defaultTo(db.fn.now());
 		});
 
 		jest.spyOn(RequestContext, 'currentTenantId').mockReturnValue(TENANT_ID);
@@ -91,5 +94,68 @@ describe('TimesheetFirstOrCreateHandler soft-deleted timesheet (MikroORM)', () =
 
 		expect(result).toMatchObject({ id: 'live' });
 		expect(commandBus.execute).not.toHaveBeenCalled();
+	});
+
+	describe('a week someone reviewed', () => {
+		const EARLIER = new Date('2026-10-19T08:00:00Z');
+		const LATER = new Date('2026-10-20T08:00:00Z');
+		const runForNewTime = () =>
+			handler.execute(
+				new TimesheetFirstOrCreateCommand(DATE, EMPLOYEE_ID, ORGANIZATION_ID, { forNewTime: true })
+			);
+
+		it.each(['APPROVED', 'DENIED'])(
+			'gives new time a new timesheet when the week only holds a %s one',
+			async (status) => {
+				await insertTimesheet('reviewed', null, { status, createdAt: EARLIER });
+
+				const result = await runForNewTime();
+
+				expect(result).toEqual({ id: 'created' });
+				expect(commandBus.execute.mock.calls[0][0]).toBeInstanceOf(TimesheetCreateCommand);
+			}
+		);
+
+		it('gives new time the timesheet of the week nobody reviewed yet, created after the approved one', async () => {
+			await insertTimesheet('approved', null, { status: 'APPROVED', createdAt: EARLIER });
+			await insertTimesheet('pending', null, { status: 'PENDING', createdAt: LATER });
+
+			const result = await runForNewTime();
+
+			expect(result).toMatchObject({ id: 'pending' });
+			expect(commandBus.execute).not.toHaveBeenCalled();
+		});
+
+		it('keeps the approved timesheet for any other change when the week has no other, as before', async () => {
+			await insertTimesheet('approved', null, { status: 'APPROVED', createdAt: EARLIER });
+
+			const result = await run();
+
+			expect(result).toMatchObject({ id: 'approved' });
+			expect(commandBus.execute).not.toHaveBeenCalled();
+		});
+
+		it('gives any other change the timesheet nobody reviewed yet when the week holds both', async () => {
+			await insertTimesheet('approved', null, { status: 'APPROVED', createdAt: EARLIER });
+			await insertTimesheet('pending', null, { status: 'PENDING', createdAt: LATER });
+
+			const result = await run();
+
+			expect(result).toMatchObject({ id: 'pending' });
+		});
+
+		it('keeps time in the timesheet of the week it is in, the approved one included', async () => {
+			await insertTimesheet('approved', null, { status: 'APPROVED', createdAt: EARLIER });
+			await insertTimesheet('pending', null, { status: 'PENDING', createdAt: LATER });
+
+			const result = await handler.execute(
+				new TimesheetFirstOrCreateCommand(DATE, EMPLOYEE_ID, ORGANIZATION_ID, {
+					currentTimesheetId: 'approved'
+				})
+			);
+
+			expect(result).toMatchObject({ id: 'approved' });
+			expect(commandBus.execute).not.toHaveBeenCalled();
+		});
 	});
 });
