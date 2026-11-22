@@ -127,9 +127,10 @@ export class TimeLogCreateHandler implements ICommandHandler<TimeLogCreateComman
 		// The project, task, client and team the log names are rows of its tenant, checked before anything is written
 		await assertTimeLogReferencesOfTenant(this.typeOrmTimeLogRepository, input, tenantId);
 
-		// Create timesheet if it doesn't exist
+		// The week's timesheet the new time waits for review in: never one already approved or denied, whose review
+		// covered the time it held then, but one nobody reviewed yet, created when the week has none
 		const timesheet = await this._commandBus.execute(
-			new TimesheetFirstOrCreateCommand(startedAt, employeeId, organizationId)
+			new TimesheetFirstOrCreateCommand(startedAt, employeeId, organizationId, { forNewTime: true })
 		);
 
 		// The rates of the moment price the log: a later rate change re-prices them as time-log-repricing.ts says (all
