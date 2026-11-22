@@ -290,6 +290,17 @@ describe('TimeLogUpdateHandler stopping a run', () => {
 		);
 	});
 
+	it('names the timesheet the run is in, which it keeps while that timesheet is of its week', async () => {
+		jest.spyOn(handler as any, 'saveUpdatedTimeLog').mockResolvedValue(undefined);
+		timeLogRepository.findOneBy.mockImplementation(async () => ({ ...LOGS[0], timesheetId: 'timesheet-it-is-in' }));
+
+		await handler.execute(stop());
+
+		const commands = execute.mock.calls.map(([command]) => command);
+		const lookup = commands.find((command) => command instanceof TimesheetFirstOrCreateCommand);
+		expect(lookup.options).toEqual({ currentTimesheetId: 'timesheet-it-is-in' });
+	});
+
 	it('writes the stop before its later steps, so a failure in them leaves the log stopped', async () => {
 		jest.spyOn(handler as any, 'saveUpdatedTimeLog').mockRejectedValue(
 			new Error('the time slots could not be saved')

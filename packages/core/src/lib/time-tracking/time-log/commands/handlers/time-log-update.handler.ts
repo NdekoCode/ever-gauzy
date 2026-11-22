@@ -233,9 +233,12 @@ export class TimeLogUpdateHandler implements ICommandHandler<TimeLogUpdateComman
 			// Generate time slots based on the updated time log details
 			const { startedAt, stoppedAt } = { ...timeLog, ...changes };
 
-			// The timesheet of the employee the log now belongs to, for the log's period.
+			// The timesheet of the employee the log now belongs to, for the log's period: its own while it stays in its
+			// week, so a timer stopped in a week with a reviewed and a pending timesheet keeps its run where it was.
 			timesheet = await this.commandBus.execute(
-				new TimesheetFirstOrCreateCommand(moved ? startedAt : input.startedAt, employeeId, organizationId)
+				new TimesheetFirstOrCreateCommand(moved ? startedAt : input.startedAt, employeeId, organizationId, {
+					currentTimesheetId: previousTimesheetId
+				})
 			);
 
 			updateTimeSlots = this.timeSlotService.generateTimeSlots(startedAt, stoppedAt);
