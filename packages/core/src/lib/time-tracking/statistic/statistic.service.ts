@@ -2414,16 +2414,22 @@ export class StatisticService {
 	}
 
 	/**
-	 * The requested members whose own task time the caller may read in a team read: those the caller may read
-	 * through the team as its manager, and those a one-employee {@link getTasks} request would read. That request
-	 * falls back to the caller's own employee for a member the caller may not pick, which gives that member
-	 * nothing: the caller's time is never another member's.
+	 * The requested members whose own task time the caller may read in a team read: every one of them for a caller
+	 * who may read the whole team (see {@link mayReadWholeTeam}); otherwise those the caller may read through the
+	 * team as its manager, and those a one-employee {@link getTasks} request would read. That request falls back to
+	 * the caller's own employee for a member the caller may not pick, which gives that member nothing: the caller's
+	 * time is never another member's.
 	 *
 	 * @param employeeIds - The requested members, without duplicates
 	 * @param organizationTeamId - The team read
 	 * @returns The members whose own rows the read keeps
 	 */
 	private async findReadableTeamMembers(employeeIds: ID[], organizationTeamId?: ID): Promise<ID[]> {
+		const mayReadWholeTeam = await this.mayReadWholeTeam(organizationTeamId);
+		if (mayReadWholeTeam) {
+			return employeeIds;
+		}
+
 		// The members the caller may read through the team, resolved once for all of them.
 		const readableInTeam = new Set<ID>();
 		if (organizationTeamId) {
@@ -2445,6 +2451,27 @@ export class StatisticService {
 		);
 
 		return employeeIds.filter((_, index) => isReadable[index]);
+	}
+
+	/**
+	 * Whether the caller may read every member's task time in a team read, as {@link getTasks} lets an employee who
+	 * names the team and no employee (see {@link mayReadEveryTeamMember}). As there, a CHANGE_SELECTED_EMPLOYEE holder
+	 * and a caller without an employee are left to the usual employee filter.
+	 *
+	 * @param organizationTeamId - The team read
+	 * @returns true when every member's own rows may be read
+	 */
+	private async mayReadWholeTeam(organizationTeamId?: ID): Promise<boolean> {
+		const callerEmployeeId = RequestContext.currentUser()?.employeeId;
+		const hasEmployeeIdentity = Boolean(callerEmployeeId);
+		const namesTeam = isNotEmpty(organizationTeamId);
+		const canChangeSelectedEmployee = RequestContext.hasPermission(PermissionsEnum.CHANGE_SELECTED_EMPLOYEE);
+		const readsAsTeamEmployee = hasEmployeeIdentity && namesTeam && !canChangeSelectedEmployee;
+		if (!readsAsTeamEmployee) {
+			return false;
+		}
+
+		return await this.mayReadEveryTeamMember(callerEmployeeId, organizationTeamId, []);
 	}
 
 	/**
